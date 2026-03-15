@@ -381,59 +381,76 @@
 
     // ─── Price Fetching ────────────────────────────────────────────────
     // Batch fetch current prices from Yahoo Finance
+    // Helper: parse Yahoo spark response (handles both single-ticker and batch formats)
+    function parseSparkResponse(data) {
+      const parsed = {};
+      // Batch format: {"spark": {"result": [...]}}
+      if (data.spark?.result) {
+        for (const item of data.spark.result) {
+          const sym = item.symbol;
+          const rawCloses = item.response?.[0]?.indicators?.quote?.[0]?.close || [];
+          const rawTimestamps = item.response?.[0]?.timestamp || [];
+          const closes = [], timestamps = [];
+          for (let k = 0; k < rawCloses.length; k++) {
+            if (rawCloses[k] != null) { closes.push(rawCloses[k]); timestamps.push(rawTimestamps[k] || 0); }
+          }
+          if (closes.length > 0) parsed[sym] = { closes, timestamps };
+        }
+      } else {
+        // Single-ticker format: {"AMZN": {"timestamp": [...], "close": [...]}}
+        for (const [sym, d] of Object.entries(data)) {
+          if (d?.close && d?.timestamp) {
+            const closes = [], timestamps = [];
+            for (let k = 0; k < d.close.length; k++) {
+              if (d.close[k] != null) { closes.push(d.close[k]); timestamps.push(d.timestamp[k] || 0); }
+            }
+            if (closes.length > 0) parsed[sym] = { closes, timestamps };
+          }
+        }
+      }
+      return parsed;
+    }
+
+    // Fetch a single ticker's spark data via allorigins proxy
+    async function fetchSingleSpark(ticker, range, interval) {
+      const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${ticker}&range=${range}&interval=${interval}`;
+      const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      return parseSparkResponse(data);
+    }
+
     async function fetchPricesBatch(tickers, onProgress) {
       const cached = loadPrices();
       const results = { ...cached };
-      const batchSize = 25;
+      const parallelLimit = 12; // Fetch 12 tickers in parallel
       let fetched = 0;
 
-      for (let i = 0; i < tickers.length; i += batchSize) {
-        const batch = tickers.slice(i, i + batchSize);
-        const symbols = batch.join(',');
-        const urls = [
-          `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols}&range=1mo&interval=1d`,
-          `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols}&range=1mo&interval=1d`)}`,
-        ];
-
-        for (const url of urls) {
+      for (let i = 0; i < tickers.length; i += parallelLimit) {
+        const batch = tickers.slice(i, i + parallelLimit);
+        const promises = batch.map(async (ticker) => {
           try {
-            const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
-            if (!resp.ok) continue;
-            const data = await resp.json();
-            if (data.spark?.result) {
-              for (const item of data.spark.result) {
-                const sym = item.symbol;
-                const rawCloses = item.response?.[0]?.indicators?.quote?.[0]?.close || [];
-                const rawTimestamps = item.response?.[0]?.timestamp || [];
-                // Filter out nulls while keeping timestamps aligned
-                const closes = [];
-                const timestamps = [];
-                for (let k = 0; k < rawCloses.length; k++) {
-                  if (rawCloses[k] != null) {
-                    closes.push(rawCloses[k]);
-                    timestamps.push(rawTimestamps[k] ? rawTimestamps[k] * 1000 : Date.now());
-                  }
-                }
-                if (closes.length > 0) {
-                  results[sym] = {
-                    price: closes[closes.length - 1],
-                    previousClose: closes.length > 1 ? closes[closes.length - 2] : closes[0],
-                    sparkline: closes,
-                    sparklineTimestamps: timestamps,
-                    lastUpdated: new Date().toISOString(),
-                  };
-                }
-              }
-              break; // Success, skip fallback URL
+            const parsed = await fetchSingleSpark(ticker, '1mo', '1d');
+            const d = parsed[ticker];
+            if (d) {
+              results[ticker] = {
+                price: d.closes[d.closes.length - 1],
+                previousClose: d.closes.length > 1 ? d.closes[d.closes.length - 2] : d.closes[0],
+                sparkline: d.closes,
+                sparklineTimestamps: d.timestamps.map(t => t * 1000),
+                lastUpdated: new Date().toISOString(),
+              };
             }
-          } catch (e) { continue; }
-        }
+          } catch (e) { /* skip ticker */ }
+        });
 
+        await Promise.all(promises);
         fetched += batch.length;
         if (onProgress) onProgress(fetched, tickers.length);
         // Small delay between batches to avoid rate limiting
-        if (i + batchSize < tickers.length) {
-          await new Promise(r => setTimeout(r, 300));
+        if (i + parallelLimit < tickers.length) {
+          await new Promise(r => setTimeout(r, 200));
         }
       }
 
@@ -449,14 +466,14 @@
       const period2 = 1578355200;
       let fetched = 0;
 
-      // Process in batches of 5 (individual chart requests)
-      const batchSize = 5;
+      // Process in parallel batches
+      const batchSize = 12;
       for (let i = 0; i < tickers.length; i += batchSize) {
         const batch = tickers.slice(i, i + batchSize);
         const promises = batch.map(async (ticker) => {
           try {
-            const url = `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=1d`;
-            const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=1d`;
+            const resp = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`, { signal: AbortSignal.timeout(8000) });
             if (resp.ok) {
               const data = await resp.json();
               const closes = data.chart?.result?.[0]?.indicators?.quote?.[0]?.close?.filter(c => c != null) || [];
@@ -478,38 +495,22 @@
       return results;
     }
 
-    // Fetch historical spark data for a given range (for compare chart)
+    // Fetch historical spark data for a given range (for compare/portfolio charts)
     async function fetchSparkRange(tickers, range, interval) {
       const results = {};
-      const batchSize = 25;
-      for (let i = 0; i < tickers.length; i += batchSize) {
-        const batch = tickers.slice(i, i + batchSize);
-        const symbols = batch.join(',');
-        const urls = [
-          `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols}&range=${range}&interval=${interval}`,
-          `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols}&range=${range}&interval=${interval}`)}`,
-        ];
-        for (const url of urls) {
+      const parallelLimit = 12;
+      for (let i = 0; i < tickers.length; i += parallelLimit) {
+        const batch = tickers.slice(i, i + parallelLimit);
+        const promises = batch.map(async (ticker) => {
           try {
-            const resp = await fetch(url, { signal: AbortSignal.timeout(12000) });
-            if (!resp.ok) continue;
-            const data = await resp.json();
-            if (data.spark?.result) {
-              for (const item of data.spark.result) {
-                const sym = item.symbol;
-                const r = item.response?.[0];
-                const timestamps = r?.timestamp || [];
-                const closes = r?.indicators?.quote?.[0]?.close || [];
-                if (timestamps.length > 0) {
-                  results[sym] = { timestamps, closes };
-                }
-              }
-              break;
-            }
-          } catch (e) { continue; }
-        }
-        if (i + batchSize < tickers.length) {
-          await new Promise(r => setTimeout(r, 300));
+            const parsed = await fetchSingleSpark(ticker, range, interval);
+            const d = parsed[ticker];
+            if (d) results[ticker] = { timestamps: d.timestamps, closes: d.closes };
+          } catch (e) { /* skip */ }
+        });
+        await Promise.all(promises);
+        if (i + parallelLimit < tickers.length) {
+          await new Promise(r => setTimeout(r, 200));
         }
       }
       return results;
@@ -518,8 +519,8 @@
     // Fetch company name
     async function fetchCompanyName(ticker) {
       try {
-        const url = `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=1d&interval=1d`;
-        const resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=1d&interval=1d`;
+        const resp = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`, { signal: AbortSignal.timeout(6000) });
         if (resp.ok) {
           const data = await resp.json();
           const meta = data.chart?.result?.[0]?.meta;
@@ -1232,31 +1233,16 @@
         // Fallback: fetch from API for tickers not in the portfolio
         setFetchingPrice(true);
         try {
-          const urls = [
-            `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/spark?symbols=${ticker}&range=5d&interval=1d`,
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/spark?symbols=${ticker}&range=5d&interval=1d`)}`,
-          ];
-          for (const url of urls) {
-            try {
-              const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-              if (!resp.ok) continue;
-              const data = await resp.json();
-              const item = data.spark?.result?.[0];
-              if (item) {
-                const closes = item.response?.[0]?.indicators?.quote?.[0]?.close?.filter(c => c != null) || [];
-                const timestamps = item.response?.[0]?.timestamp || [];
-                if (closes.length > 0) {
-                  const lastPrice = closes[closes.length - 1];
-                  const lastTs = timestamps[timestamps.length - 1];
-                  const closeDate = lastTs ? new Date(lastTs * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
-                  setLastClose({ price: lastPrice, date: closeDate });
-                  setFetchingPrice(false);
-                  return;
-                }
-              }
-            } catch (e) { continue; }
+          const parsed = await fetchSingleSpark(ticker.toUpperCase(), '5d', '1d');
+          const d = parsed[ticker.toUpperCase()];
+          if (d && d.closes.length > 0) {
+            const lastPrice = d.closes[d.closes.length - 1];
+            const lastTs = d.timestamps[d.timestamps.length - 1];
+            const closeDate = lastTs ? new Date(lastTs * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+            setLastClose({ price: lastPrice, date: closeDate });
+          } else {
+            setLastClose({ error: true });
           }
-          setLastClose({ error: true });
         } catch (e) { setLastClose({ error: true }); }
         setFetchingPrice(false);
       };
