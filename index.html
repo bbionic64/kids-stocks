@@ -441,12 +441,12 @@
       return results;
     }
 
-    // Fetch Nov 2017 historical prices to set purchase prices
+    // Fetch Jan 2020 historical prices to set purchase prices
     async function fetchHistoricalPrices(tickers, onProgress) {
       const results = {};
-      // Unix timestamp for Nov 1, 2017 and Nov 10, 2017
-      const period1 = 1509494400;
-      const period2 = 1510358400;
+      // Unix timestamp for Jan 2, 2020 and Jan 7, 2020
+      const period1 = 1577923200;
+      const period2 = 1578355200;
       let fetched = 0;
 
       // Process in batches of 5 (individual chart requests)
@@ -611,8 +611,10 @@
       { key: '1M', range: '1mo', interval: '1d', label: '1M' },
       { key: '3M', range: '3mo', interval: '1d', label: '3M' },
       { key: '6M', range: '6mo', interval: '1wk', label: '6M' },
+      { key: 'YTD', range: 'ytd', interval: '1wk', label: 'YTD' },
       { key: '1Y', range: '1y', interval: '1wk', label: '1Y' },
-      { key: 'ALL', range: 'max', interval: '1mo', label: 'ALL' },
+      { key: '3Y', range: '3y', interval: '1mo', label: '3Y' },
+      { key: '5Y', range: '5y', interval: '1mo', label: '5Y' },
     ];
 
     function LineChartComponent({ lots, prices }) {
@@ -1738,9 +1740,11 @@
       { label: '1W', range: '5d', interval: '1d' },
       { label: '1M', range: '1mo', interval: '1d' },
       { label: '3M', range: '3mo', interval: '1d' },
-      { label: '6M', range: '6mo', interval: '1d' },
-      { label: '1Y', range: '1y', interval: '1d' },
-      { label: 'ALL', range: 'max', interval: '1wk' },
+      { label: '6M', range: '6mo', interval: '1wk' },
+      { label: 'YTD', range: 'ytd', interval: '1wk' },
+      { label: '1Y', range: '1y', interval: '1wk' },
+      { label: '3Y', range: '3y', interval: '1mo' },
+      { label: '5Y', range: '5y', interval: '1mo' },
     ];
 
     function CompareView({ accounts, prices }) {
