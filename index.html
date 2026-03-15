@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Tracker 🚀</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { inter: ['Inter', 'sans-serif'] },
+          colors: {
+            rh: {
+              bg: '#0a0e17',
+              card: '#141a26',
+              surface: '#1c2333',
+              border: '#2a3144',
+              green: '#00c805',
+              red: '#ff5000',
+              blue: '#5ac8fa',
+              yellow: '#ffcc00',
+              text: '#f0f6fc',
+              muted: '#8b949e',
+              dim: '#4a5568',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+    body { background: #0a0e17; color: #f0f6fc; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0a0e17; }
+    ::-webkit-scrollbar-thumb { background: #2a3144; border-radius: 3px; }
+    .skeleton { background: linear-gradient(90deg, #1c2333 25%, #2a3144 50%, #1c2333 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeIn 0.25s ease-out; }
+    @keyframes pop { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+    .pop-in { animation: pop 0.3s ease-out; }
+    @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 5px rgba(0,200,5,0.3); } 50% { box-shadow: 0 0 20px rgba(0,200,5,0.6); } }
+    .glow-green { animation: pulse-glow 2s ease-in-out infinite; }
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type="number"] { -moz-appearance: textfield; }
+    .chart-container { position: relative; width: 100%; }
+    input, select { background: #1c2333; border: 1px solid #2a3144; color: #f0f6fc; }
+    input:focus, select:focus { outline: none; border-color: #00c805; box-shadow: 0 0 0 2px rgba(0,200,5,0.2); }
+    input::placeholder { color: #4a5568; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // ─── S&P 500 Data with approximate Nov 1, 2017 split-adjusted prices ─
+    // [ticker, company name, approx Nov 2017 price (split-adjusted)]
+    // Companies IPO'd after Nov 2017 use their first available price
+    const SP500_DATA = [
+      ["NVDA","NVIDIA Corporation",5.00],["AAPL","Apple Inc.",42.25],["GOOGL","Alphabet Inc. (Class A)",52.00],
+      ["GOOG","Alphabet Inc. (Class C)",52.00],["MSFT","Microsoft Corporation",84.00],["AMZN","Amazon.com Inc.",55.20],
+      ["META","Meta Platforms Inc.",182.00],["AVGO","Broadcom Inc.",26.50],["TSLA","Tesla Inc.",21.00],
+      ["BRK.B","Berkshire Hathaway Inc.",185.00],["WMT","Walmart Inc.",88.00],["LLY","Eli Lilly and Company",84.00],
+      ["JPM","JPMorgan Chase & Co.",100.00],["XOM","Exxon Mobil Corporation",83.00],["V","Visa Inc.",110.00],
+      ["JNJ","Johnson & Johnson",140.00],["MU","Micron Technology Inc.",43.00],["COST","Costco Wholesale Corporation",163.00],
+      ["ORCL","Oracle Corporation",50.00],["MA","Mastercard Incorporated",150.00],["NFLX","Netflix Inc.",200.00],
+      ["CVX","Chevron Corporation",118.00],["ABBV","AbbVie Inc.",92.00],["PLTR","Palantir Technologies Inc.",10.00],
+      ["PG","Procter & Gamble Company",88.00],["HD","Home Depot Inc.",166.00],["BAC","Bank of America Corporation",27.00],
+      ["KO","Coca-Cola Company",46.00],["CAT","Caterpillar Inc.",138.00],["AMD","Advanced Micro Devices Inc.",12.00],
+      ["GE","GE Aerospace",160.00],["CSCO","Cisco Systems Inc.",34.00],["MRK","Merck & Co. Inc.",56.00],
+      ["RTX","RTX Corporation",68.00],["PM","Philip Morris International",108.00],["AMAT","Applied Materials Inc.",55.00],
+      ["LRCX","Lam Research Corporation",193.00],["UNH","UnitedHealth Group",215.00],["MS","Morgan Stanley",50.00],
+      ["TMUS","T-Mobile US Inc.",62.00],["GS","Goldman Sachs Group",245.00],["MCD","McDonald's Corporation",168.00],
+      ["IBM","International Business Machines",153.00],["LIN","Linde plc",163.00],["WFC","Wells Fargo & Company",56.00],
+      ["INTC","Intel Corporation",46.00],["PEP","PepsiCo Inc.",113.00],["GEV","GE Vernova Inc.",160.00],
+      ["VZ","Verizon Communications",49.00],["AXP","American Express Company",96.00],["AMGN","Amgen Inc.",175.00],
+      ["T","AT&T Inc.",34.00],["NEE","NextEra Energy Inc.",35.00],["ABT","Abbott Laboratories",55.00],
+      ["KLAC","KLA Corporation",108.00],["C","Citigroup Inc.",73.00],["GILD","Gilead Sciences Inc.",78.00],
+      ["CRM","Salesforce Inc.",108.00],["DIS","Walt Disney Company",98.00],["TXN","Texas Instruments",97.00],
+      ["TJX","TJX Companies Inc.",75.00],["TMO","Thermo Fisher Scientific",195.00],["ANET","Arista Networks Inc.",195.00],
+      ["ISRG","Intuitive Surgical Inc.",380.00],["BA","Boeing Company",262.00],["APH","Amphenol Corporation",43.00],
+      ["SCHW","Charles Schwab Corporation",46.00],["DE","Deere & Company",135.00],["APP","AppLovin Corporation",20.00],
+      ["PFE","Pfizer Inc.",35.00],["UBER","Uber Technologies Inc.",42.00],["ADI","Analog Devices Inc.",90.00],
+      ["HON","Honeywell International",146.00],["COP","ConocoPhillips",49.00],["LMT","Lockheed Martin Corporation",318.00],
+      ["WELL","Welltower Inc.",63.00],["UNP","Union Pacific Corporation",117.00],["BLK","BlackRock Inc.",462.00],
+      ["QCOM","QUALCOMM Incorporated",53.00],["ETN","Eaton Corporation",78.00],["PANW","Palo Alto Networks Inc.",49.00],
+      ["BKNG","Booking Holdings Inc.",1840.00],["LOW","Lowe's Companies Inc.",82.00],["DHR","Danaher Corporation",92.00],
+      ["SYK","Stryker Corporation",155.00],["CB","Chubb Limited",148.00],["SPGI","S&P Global Inc.",165.00],
+      ["PLD","Prologis Inc.",62.00],["INTU","Intuit Inc.",155.00],["ACN","Accenture plc",140.00],
+      ["BMY","Bristol-Myers Squibb",62.00],["PGR","Progressive Corporation",50.00],["VRTX","Vertex Pharmaceuticals",148.00],
+      ["NEM","Newmont Corporation",37.00],["HCA","HCA Healthcare Inc.",82.00],["NOW","ServiceNow Inc.",125.00],
+      ["MCK","McKesson Corporation",155.00],["MO","Altria Group Inc.",64.00],["SBUX","Starbucks Corporation",57.00],
+      ["PH","Parker-Hannifin Corporation",188.00],["CRWD","CrowdStrike Holdings Inc.",34.00],["MDT","Medtronic plc",82.00],
+      ["COF","Capital One Financial",90.00],["CME","CME Group Inc.",140.00],["GLW","Corning Incorporated",30.00],
+      ["SO","Southern Company",50.00],["CEG","Constellation Energy",45.00],["CMCSA","Comcast Corporation",36.00],
+      ["NOC","Northrop Grumman Corporation",290.00],["DUK","Duke Energy Corporation",87.00],["BSX","Boston Scientific Corporation",27.00],
+      ["ADBE","Adobe Inc.",183.00],["DELL","Dell Technologies Inc.",78.00],["CVS","CVS Health Corporation",69.00],
+      ["WM","Waste Management Inc.",85.00],["NRG","NRG Energy Inc.",28.00],["EQIX","Equinix Inc.",440.00],
+      ["GD","General Dynamics Corporation",205.00],["HWM","Howmet Aerospace Inc.",25.00],["TT","Trane Technologies plc",90.00],
+      ["WDC","Western Digital Corporation",85.00],["ICE","Intercontinental Exchange",65.00],["WMB","Williams Companies Inc.",30.00],
+      ["AMT","American Tower Corporation",142.00],["ADP","Automatic Data Processing",115.00],["STX","Seagate Technology",38.00],
+      ["PWR","Quanta Services Inc.",38.00],["MAR","Marriott International",130.00],["FDX","FedEx Corporation",225.00],
+      ["UPS","United Parcel Service",122.00],["PNC","PNC Financial Services",135.00],["FCX","Freeport-McMoRan Inc.",14.00],
+      ["NKE","NIKE Inc.",55.00],["BK","Bank of New York Mellon",53.00],["JCI","Johnson Controls International",39.00],
+      ["MMM","3M Company",235.00],["BX","Blackstone Inc.",33.00],["SHW","Sherwin-Williams Company",398.00],
+      ["USB","U.S. Bancorp",54.00],["SNPS","Synopsys Inc.",88.00],["REGN","Regeneron Pharmaceuticals",408.00],
+      ["MSI","Motorola Solutions Inc.",92.00],["CDNS","Cadence Design Systems",42.00],["CTAS","Cintas Corporation",153.00],
+      ["ECL","Ecolab Inc.",133.00],["ITW","Illinois Tool Works",158.00],["ABNB","Airbnb Inc.",68.00],
+      ["ORLY","O'Reilly Automotive Inc.",225.00],["KKR","KKR & Co. Inc.",20.00],["MCO","Moody's Corporation",140.00],
+      ["MNST","Monster Beverage Corporation",57.00],["EMR","Emerson Electric Co.",62.00],["KMI","Kinder Morgan Inc.",18.00],
+      ["CMI","Cummins Inc.",170.00],["RCL","Royal Caribbean Cruises",116.00],["CSX","CSX Corporation",53.00],
+      ["EOG","EOG Resources Inc.",102.00],["AEP","American Electric Power",72.00],["CL","Colgate-Palmolive Company",73.00],
+      ["CI","Cigna Group",198.00],["MDLZ","Mondelez International",42.00],["DASH","DoorDash Inc.",102.00],
+      ["PSX","Phillips 66",100.00],["RSG","Republic Services Inc.",65.00],["VLO","Valero Energy Corporation",85.00],
+      ["AON","Aon plc",140.00],["TDG","TransDigm Group",280.00],["ROST","Ross Stores Inc.",66.00],
+      ["LHX","L3Harris Technologies",155.00],["SLB","SLB N.V.",67.00],["HLT","Hilton Worldwide Holdings",72.00],
+      ["CRH","CRH plc",35.00],["MPC","Marathon Petroleum Corporation",62.00],["HOOD","Robinhood Markets Inc.",38.00],
+      ["GM","General Motors Company",44.00],["TRV","Travelers Companies Inc.",130.00],["NSC","Norfolk Southern Corporation",140.00],
+      ["ELV","Elevance Health Inc.",208.00],["APD","Air Products and Chemicals",158.00],["SRE","Sempra",112.00],
+      ["FTNT","Fortinet Inc.",8.40],["DLR","Digital Realty Trust",112.00],["SPG","Simon Property Group",162.00],
+      ["PCAR","PACCAR Inc",68.00],["APO","Apollo Global Management",28.00],["O","Realty Income Corporation",55.00],
+      ["AZO","AutoZone Inc.",595.00],["TEL","TE Connectivity plc",82.00],["OXY","Occidental Petroleum",60.00],
+      ["AFL","Aflac Incorporated",85.00],["D","Dominion Energy Inc.",80.00],["TFC","Truist Financial Corporation",50.00],
+      ["OKE","ONEOK Inc.",53.00],["ALL","Allstate Corporation",97.00],["BKR","Baker Hughes Company",32.00],
+      ["VST","Vistra Corp.",20.00],["AJG","Arthur J. Gallagher & Co.",62.00],["CTVA","Corteva Inc.",26.00],
+      ["TGT","Target Corporation",57.00],["ADSK","Autodesk Inc.",118.00],["PSA","Public Storage",208.00],
+      ["FAST","Fastenal Company",47.00],["MPWR","Monolithic Power Systems",110.00],["COIN","Coinbase Global Inc.",328.00],
+      ["TRGP","Targa Resources Corp.",47.00],["FANG","Diamondback Energy Inc.",112.00],["XEL","Xcel Energy Inc.",48.00],
+      ["CAH","Cardinal Health Inc.",62.00],["EXC","Exelon Corporation",38.00],["GWW","W.W. Grainger Inc.",206.00],
+      ["EA","Electronic Arts Inc.",116.00],["AME","AMETEK Inc.",67.00],["ZTS","Zoetis Inc.",68.00],
+      ["NDAQ","Nasdaq Inc.",77.00],["NXPI","NXP Semiconductors",110.00],["KEYS","Keysight Technologies",42.00],
+      ["ETR","Entergy Corporation",82.00],["EW","Edwards Lifesciences",108.00],["CARR","Carrier Global Corporation",22.00],
+      ["F","Ford Motor Company",12.50],["URI","United Rentals Inc.",158.00],["KR","Kroger Co.",23.00],
+      ["IDXX","IDEXX Laboratories Inc.",148.00],["BDX","Becton Dickinson and Company",215.00],["GRMN","Garmin Ltd.",58.00],
+      ["TER","Teradyne Inc.",38.00],["YUM","Yum! Brands Inc.",78.00],["MET","MetLife Inc.",52.00],
+      ["HSY","Hershey Company",113.00],["DDOG","Datadog Inc.",27.00],["CVNA","Carvana Co.",15.00],
+      ["CMG","Chipotle Mexican Grill",6.20],["PEG","Public Service Enterprise Group",50.00],["ED","Consolidated Edison",84.00],
+      ["PYPL","PayPal Holdings Inc.",75.00],["AIG","American International Group",62.00],["VTR","Ventas Inc.",60.00],
+      ["SYY","Sysco Corporation",58.00],["EBAY","eBay Inc.",36.00],["DHI","D.R. Horton Inc.",43.00],
+      ["ROK","Rockwell Automation Inc.",185.00],["WAB","Westinghouse Air Brake Technologies",82.00],["AMP","Ameriprise Financial",165.00],
+      ["MSCI","MSCI Inc.",118.00],["EQT","EQT Corporation",52.00],["CBRE","CBRE Group Inc.",42.00],
+      ["AXON","Axon Enterprise Inc.",25.00],["FITB","Fifth Third Bancorp",28.00],["TTWO","Take-Two Interactive",108.00],
+      ["DAL","Delta Air Lines Inc.",50.00],["WEC","WEC Energy Group",65.00],["CCI","Crown Castle Inc.",113.00],
+      ["ODFL","Old Dominion Freight Line",118.00],["NUE","Nucor Corporation",58.00],["KDP","Keurig Dr Pepper Inc.",60.00],
+      ["HIG","Hartford Insurance Group",55.00],["TPL","Texas Pacific Land Corporation",310.00],["LYV","Live Nation Entertainment",42.00],
+      ["ROP","Roper Technologies Inc.",255.00],["LVS","Las Vegas Sands Corp.",65.00],["MLM","Martin Marietta Materials",218.00],
+      ["VMC","Vulcan Materials Company",125.00],["ADM","Archer-Daniels-Midland",42.00],["WDAY","Workday Inc.",108.00],
+      ["STT","State Street Corporation",95.00],["RMD","ResMed Inc.",85.00],["KVUE","Kenvue Inc.",27.00],
+      ["MCHP","Microchip Technology",95.00],["ACGL","Arch Capital Group",95.00],["PAYX","Paychex Inc.",62.00],
+      ["CPRT","Copart Inc.",33.00],["KMB","Kimberly-Clark Corporation",118.00],["OTIS","Otis Worldwide Corporation",62.00],
+      ["GEHC","GE HealthCare Technologies",70.00],["IR","Ingersoll Rand Inc.",35.00],["PRU","Prudential Financial Inc.",110.00],
+      ["EL","Estee Lauder Companies",115.00],["EME","EMCOR Group Inc.",75.00],["IRM","Iron Mountain Incorporated",38.00],
+      ["A","Agilent Technologies Inc.",68.00],["ATO","Atmos Energy Corporation",87.00],["DTE","DTE Energy Company",110.00],
+      ["AEE","Ameren Corporation",60.00],["HBAN","Huntington Bancshares",14.00],["VICI","VICI Properties Inc.",22.00],
+      ["FISV","Fiserv Inc.",132.00],["CBOE","Cboe Global Markets",110.00],["EXR","Extra Space Storage Inc.",82.00],
+      ["CCL","Carnival Corporation",65.00],["TDY","Teledyne Technologies",167.00],["FE","FirstEnergy Corp.",32.00],
+      ["IBKR","Interactive Brokers Group",48.00],["MTB","M&T Bank Corporation",170.00],["XYL","Xylem Inc.",63.00],
+      ["DG","Dollar General Corporation",82.00],["PPL","PPL Corporation",35.00],["CTSH","Cognizant Technology Solutions",73.00],
+      ["TPR","Tapestry Inc.",42.00],["RJF","Raymond James Financial",87.00],["CNP","CenterPoint Energy Inc.",28.00],
+      ["DVN","Devon Energy Corporation",38.00],["HPE","Hewlett Packard Enterprise",14.00],["HAL","Halliburton Company",42.00],
+      ["WAT","Waters Corporation",195.00],["UAL","United Airlines Holdings",62.00],["EXPE","Expedia Group Inc.",120.00],
+      ["IQV","IQVIA Holdings Inc.",100.00],["VRSK","Verisk Analytics Inc.",92.00],["CHTR","Charter Communications",332.00],
+      ["EIX","Edison International",80.00],["DOV","Dover Corporation",95.00],["ES","Eversource Energy",62.00],
+      ["WTW","Willis Towers Watson",148.00],["AWK","American Water Works",85.00],["FICO","Fair Isaac Corporation",155.00],
+      ["KHC","Kraft Heinz Company",78.00],["BIIB","Biogen Inc.",318.00],["ROL","Rollins Inc.",47.00],
+      ["JBL","Jabil Inc.",30.00],["DOW","Dow Inc.",55.00],["STZ","Constellation Brands",215.00],
+      ["WRB","W. R. Berkley Corporation",68.00],["FIS","Fidelity National Information Services",93.00],
+      ["CINF","Cincinnati Financial",72.00],["NTRS","Northern Trust Corporation",98.00],["TSCO","Tractor Supply Company",70.00],
+      ["HUBB","Hubbell Incorporated",120.00],["DXCM","DexCom Inc.",14.00],["STLD","Steel Dynamics Inc.",40.00],
+      ["FOXA","Fox Corporation (Class A)",28.00],["CTRA","Coterra Energy Inc.",22.00],["OMC","Omnicom Group Inc.",72.00],
+      ["BG","Bunge Global SA",72.00],["MTD","Mettler-Toledo International",628.00],["CMS","CMS Energy Corporation",47.00],
+      ["ULTA","Ulta Beauty Inc.",218.00],["AVB","AvalonBay Communities",178.00],["CFG","Citizens Financial Group",40.00],
+      ["LEN","Lennar Corporation",57.00],["DRI","Darden Restaurants Inc.",82.00],["LYB","LyondellBasell Industries",102.00],
+      ["BRO","Brown & Brown Inc.",25.00],["CHD","Church & Dwight Co.",48.00],["ON","ON Semiconductor Corporation",20.00],
+      ["PHM","PulteGroup Inc.",30.00],["ARES","Ares Management Corporation",22.00],["PPG","PPG Industries Inc.",112.00],
+      ["NI","NiSource Inc.",26.00],["EQR","Equity Residential",62.00],["VLTO","Veralto Corporation",75.00],
+      ["L","Loews Corporation",50.00],["SYF","Synchrony Financial",33.00],["EFX","Equifax Inc.",108.00],
+      ["FOX","Fox Corporation (Class B)",27.00],["LDOS","Leidos Holdings Inc.",65.00],["DGX","Quest Diagnostics",96.00],
+      ["VRSN","VeriSign Inc.",108.00],["LH","Labcorp Holdings Inc.",155.00],["CPAY","Corpay Inc.",155.00],
+      ["RF","Regions Financial Corporation",16.00],["WSM","Williams-Sonoma Inc.",52.00],["DLTR","Dollar Tree Inc.",88.00],
+      ["TSN","Tyson Foods Inc.",78.00],["STE","STERIS plc",88.00],["FSLR","First Solar Inc.",50.00],
+      ["GIS","General Mills Inc.",54.00],["BR","Broadridge Financial Solutions",90.00],["MRNA","Moderna Inc.",15.00],
+      ["KEY","KeyCorp",19.00],["CHRW","C.H. Robinson Worldwide",82.00],["RL","Ralph Lauren Corporation",98.00],
+      ["HUM","Humana Inc.",250.00],["CF","CF Industries Holdings",35.00],["SBAC","SBA Communications",158.00],
+      ["IP","International Paper Company",57.00],["NTAP","NetApp Inc.",47.00],["TROW","T. Rowe Price Group",100.00],
+      ["GPN","Global Payments Inc.",100.00],["PKG","Packaging Corporation of America",115.00],["SNA","Snap-on Incorporated",158.00],
+      ["LUV","Southwest Airlines Co.",55.00],["EXPD","Expeditors International",62.00],["EVRG","Evergy Inc.",52.00],
+      ["JBHT","J.B. Hunt Transport Services",108.00],["AMCR","Amcor plc",13.00],["LNT","Alliant Energy Corporation",42.00],
+      ["ALB","Albemarle Corporation",120.00],["PFG","Principal Financial Group",65.00],["PTC","PTC Inc.",58.00],
+      ["ZBH","Zimmer Biomet Holdings",118.00],["SMCI","Super Micro Computer Inc.",18.00],["INCY","Incyte Corporation",112.00],
+      ["DD","DuPont de Nemours Inc.",72.00],["CSGP","CoStar Group Inc.",32.00],["NVR","NVR Inc.",3100.00],
+      ["IFF","International Flavors & Fragrances",148.00],["LULU","lululemon athletica inc.",65.00],["HPQ","HP Inc.",22.00],
+      ["WST","West Pharmaceutical Services",98.00],["CNC","Centene Corporation",95.00],["WY","Weyerhaeuser Company",35.00],
+      ["HOLX","Hologic Inc.",40.00],["LII","Lennox International Inc.",195.00],["FTV","Fortive Corporation",68.00],
+      ["BALL","Ball Corporation",37.00],["FFIV","F5 Inc.",120.00],["HII","Huntington Ingalls Industries",218.00],
+      ["ESS","Essex Property Trust",252.00],["TXT","Textron Inc.",52.00],["MKC","McCormick & Company",100.00],
+      ["AKAM","Akamai Technologies Inc.",52.00],["VTRS","Viatris Inc.",37.00],["TRMB","Trimble Inc.",38.00],
+      ["PODD","Insulet Corporation",72.00],["KIM","Kimco Realty Corporation",19.00],["INVH","Invitation Homes Inc.",23.00],
+      ["J","Jacobs Solutions Inc.",62.00],["TYL","Tyler Technologies Inc.",180.00],["APTV","Aptiv PLC",88.00],
+      ["CDW","CDW Corporation",68.00],["NDSN","Nordson Corporation",128.00],["MAA","Mid-America Apartment Communities",103.00],
+      ["GPC","Genuine Parts Company",92.00],["PNR","Pentair plc",68.00],["DECK","Deckers Outdoor Corporation",75.00],
+      ["REG","Regency Centers Corporation",62.00],["IEX","IDEX Corporation",128.00],["COO","Cooper Companies Inc.",218.00],
+      ["DPZ","Domino's Pizza Inc.",192.00],["CLX","Clorox Company",132.00],["HAS","Hasbro Inc.",92.00],
+      ["AVY","Avery Dennison Corporation",108.00],["BBY","Best Buy Co. Inc.",58.00],["NWSA","News Corporation (Class A)",15.00],
+      ["TTD","Trade Desk Inc.",6.00],["EG","Everest Group Ltd.",232.00],["ERIE","Erie Indemnity Company",125.00],
+      ["HST","Host Hotels & Resorts",19.00],["BEN","Franklin Resources Inc.",44.00],["MAS","Masco Corporation",40.00],
+      ["GEN","Gen Digital Inc.",28.00],["ALLE","Allegion plc",80.00],["HRL","Hormel Foods Corporation",34.00],
+      ["PNW","Pinnacle West Capital",83.00],["JKHY","Jack Henry & Associates",115.00],["APA","APA Corporation",42.00],
+      ["DOC","Healthpeak Properties Inc.",27.00],["GNRC","Generac Holdings Inc.",44.00],["UHS","Universal Health Services",108.00],
+      ["IT","Gartner Inc.",125.00],["ALGN","Align Technology Inc.",233.00],["UDR","UDR Inc.",36.00],
+      ["SOLV","Solventum Corporation",55.00],["SJM","J. M. Smucker Company",108.00],["GDDY","GoDaddy Inc.",45.00],
+      ["GL","Globe Life Inc.",87.00],["SWK","Stanley Black & Decker",162.00],["AIZ","Assurant Inc.",100.00],
+      ["BF.B","Brown-Forman Corporation",58.00],["WYNN","Wynn Resorts Limited",148.00],["CPT","Camden Property Trust",90.00],
+      ["IVZ","Invesco Ltd.",35.00],["AES","AES Corporation",10.50],["DVA","DaVita Inc.",62.00],
+      ["ZBRA","Zebra Technologies Corporation",114.00],["BLDR","Builders FirstSource Inc.",18.00],["RVTY","Revvity Inc.",68.00],
+      ["MGM","MGM Resorts International",32.00],["MOS","Mosaic Company",22.00],["AOS","A. O. Smith Corporation",58.00],
+      ["FRT","Federal Realty Investment Trust",122.00],["BAX","Baxter International Inc.",65.00],["HSIC","Henry Schein Inc.",65.00],
+      ["NCLH","Norwegian Cruise Line Holdings",53.00],["ARE","Alexandria Real Estate Equities",125.00],["BXP","BXP Inc.",122.00],
+      ["SWKS","Skyworks Solutions Inc.",108.00],["TECH","Bio-Techne Corporation",125.00],["CAG","Conagra Brands Inc.",34.00],
+      ["TAP","Molson Coors Beverage Company",82.00],["MOH","Molina Healthcare Inc.",78.00],["CRL","Charles River Laboratories",102.00],
+      ["FDS","FactSet Research Systems",192.00],["POOL","Pool Corporation",128.00],["EPAM","EPAM Systems Inc.",95.00],
+      ["MTCH","Match Group Inc.",28.00],["PAYC","Paycom Software Inc.",88.00],["CPB","Campbell's Company",48.00],
+      ["LW","Lamb Weston Holdings Inc.",52.00],["PCG","PG&E Corporation",11.00],
+    ];
+
+    // ─── Constants & Helpers ───────────────────────────────────────────
+    const ACCOUNTS_KEY = 'stockTrackerAccounts';
+    const PRICES_KEY = 'stockTrackerPrices';
+    const PURCHASE_DATE = '2017-11-01';
+    const ACCENT_COLORS = ['#00c805', '#5ac8fa', '#a78bfa', '#fb923c'];
+    const AVATAR_EMOJIS = ['🦄','🐉','🚀','🦊','🐺','🦅','🎮','⚡','🏆','🔥','💎','🌊','🐻','🦁','👑','🎯'];
+
+    // Ticker emoji mapping
+    const TICKER_EMOJIS = {
+      AAPL:'🍎',MSFT:'💻',GOOGL:'🔍',GOOG:'🔍',AMZN:'📦',META:'👥',TSLA:'⚡',NVDA:'🎮',
+      NFLX:'🎬',DIS:'🏰',SBUX:'☕',NKE:'👟',MCD:'🍔',KO:'🥤',PEP:'🥤',WMT:'🛒',
+      TGT:'🎯',COST:'🏪',V:'💳',MA:'💳',JPM:'🏦',BAC:'🏦',GS:'🏦',PYPL:'💰',
+      EA:'🎮',TTWO:'🎮',SPOT:'🎵',UBER:'🚗',F:'🚙',GM:'🚙',BA:'✈️',DAL:'✈️',
+      UAL:'✈️',LUV:'✈️',XOM:'⛽',CVX:'⛽',HD:'🔨',LOW:'🔨',T:'📱',VZ:'📱',
+      TMUS:'📱',CRM:'☁️',ORCL:'☁️',ADBE:'🎨',INTC:'🔧',AMD:'🔧',QCOM:'📡',
+      'BRK.B':'🧓',COIN:'🪙',HOOD:'📈',RBLX:'🎮',CAT:'🚜',DE:'🚜',LMT:'🚀',
+      PFE:'💉',JNJ:'🩹',UNH:'🏥',AMGN:'💊',MRK:'💊',ABT:'🔬',TMO:'🔬',
+      CMG:'🌯',DPZ:'🍕',YUM:'🍗',HSY:'🍫',MNST:'🥫',GIS:'🥣',KHC:'🧴',
+      CCL:'🚢',RCL:'🚢',NCLH:'🚢',WYNN:'🎰',LVS:'🎰',MGM:'🎰',HLT:'🏨',
+      MAR:'🏨',ABNB:'🏠',LLY:'💊',PM:'🚬',MO:'🚬',SHW:'🎨',NEM:'⛏️',
+      FCX:'⛏️',TSLA:'⚡',NEE:'⚡',SO:'⚡',DUK:'⚡',RTX:'🛡️',NOC:'🛡️',GD:'🛡️',
+    };
+
+    // Company descriptions for kids
+    const COMPANY_DESCRIPTIONS = {
+      AAPL:"Apple makes iPhones, iPads, Mac computers, and Apple Watch!",
+      MSFT:"Microsoft makes Windows, Xbox, Minecraft, and the AI assistant Copilot!",
+      GOOGL:"Google runs the world's biggest search engine, YouTube, and Android phones!",
+      GOOG:"Google runs the world's biggest search engine, YouTube, and Android phones!",
+      AMZN:"Amazon delivers packages to your door and runs the biggest online store ever!",
+      META:"Meta owns Instagram, Facebook, and WhatsApp. They're building virtual worlds!",
+      TSLA:"Tesla makes electric cars, solar panels, and is building humanoid robots!",
+      NVDA:"NVIDIA makes the super-powerful chips that run video games and AI!",
+      NFLX:"Netflix streams movies and shows. They make tons of their own content too!",
+      DIS:"Disney makes your favorite movies, runs theme parks, and has Disney+!",
+      SBUX:"Starbucks is the world's biggest coffee chain with stores everywhere!",
+      NKE:"Nike makes sneakers and sports gear. Just Do It!",
+      MCD:"McDonald's serves burgers and fries in restaurants all over the world!",
+      KO:"Coca-Cola makes Coke, Sprite, Fanta, and tons of other drinks!",
+      PEP:"PepsiCo makes Pepsi, Mountain Dew, Gatorade, Doritos, and Lay's!",
+      EA:"EA makes popular games like FIFA, Madden, The Sims, and Apex Legends!",
+      TTWO:"Take-Two makes Grand Theft Auto, NBA 2K, and Red Dead Redemption!",
+      UBER:"Uber gives people rides and delivers food from restaurants!",
+      JPM:"JPMorgan Chase is the biggest bank in America!",
+      V:"Visa helps people pay with cards instead of cash, worldwide!",
+      MA:"Mastercard powers billions of card payments around the world!",
+      BA:"Boeing builds airplanes and rockets for space!",
+      COIN:"Coinbase lets people buy and trade cryptocurrency like Bitcoin!",
+      HOOD:"Robinhood lets regular people buy and sell stocks from their phones!",
+      WMT:"Walmart is one of the biggest stores in the world!",
+      COST:"Costco is a giant warehouse store where families buy in bulk!",
+      HD:"Home Depot is a huge store for building and fixing things!",
+      CAT:"Caterpillar makes giant construction vehicles and equipment!",
+      CMG:"Chipotle makes fresh burritos, bowls, and tacos!",
+      DPZ:"Domino's delivers pizza all over the world!",
+      HSY:"Hershey makes chocolate, Reese's, Kit Kats, and other candy!",
+      ABNB:"Airbnb lets people rent houses and apartments for vacations!",
+      LULU:"Lululemon makes athletic clothes for yoga and working out!",
+      F:"Ford makes cars and trucks like the F-150 and Mustang!",
+      GM:"General Motors makes Chevrolet, GMC, Cadillac, and Buick cars!",
+      AMD:"AMD makes fast computer chips for gaming PCs!",
+      INTC:"Intel makes the tiny chips inside most computers!",
+      LLY:"Eli Lilly makes medicines that help people stay healthy!",
+    };
+
+    const BRIGHT_COLORS = [
+      '#00c805','#5ac8fa','#a78bfa','#f472b6','#fb923c',
+      '#facc15','#ff5000','#06b6d4','#8b5cf6','#ec4899',
+      '#14b8a6','#f97316','#6366f1','#84cc16','#e879f9'
+    ];
+
+    function formatCurrency(val) {
+      if (val == null || isNaN(val)) return '$0.00';
+      if (Math.abs(val) >= 1e6) return '$' + (val/1e6).toFixed(2) + 'M';
+      if (Math.abs(val) >= 1e4) return '$' + (val/1e3).toFixed(1) + 'K';
+      return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(val);
+    }
+
+    function formatPercent(val) {
+      if (val == null || isNaN(val)) return '0.00%';
+      return (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
+    }
+
+    function formatDate(d) {
+      if (!d) return '';
+      return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    }
+
+    function getEmoji(t) { return TICKER_EMOJIS[t?.toUpperCase()] || '📊'; }
+    function getDescription(t) { return COMPANY_DESCRIPTIONS[t?.toUpperCase()] || `A company in the S&P 500 index.`; }
+
+    // ─── Data Persistence ──────────────────────────────────────────────
+    function loadAccounts() {
+      try { return JSON.parse(localStorage.getItem(ACCOUNTS_KEY)) || null; } catch { return null; }
+    }
+    function saveAccounts(data) { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(data)); }
+    function loadPortfolio(accountId) {
+      try { return JSON.parse(localStorage.getItem(`stockTrackerLots_${accountId}`)) || []; } catch { return []; }
+    }
+    function savePortfolio(lots, accountId) { localStorage.setItem(`stockTrackerLots_${accountId}`, JSON.stringify(lots)); }
+    function loadPrices() { try { return JSON.parse(localStorage.getItem(PRICES_KEY)) || {}; } catch { return {}; } }
+    function savePrices(p) { localStorage.setItem(PRICES_KEY, JSON.stringify(p)); }
+
+    // Migrate from single-account to multi-account (one-time)
+    function migrateToMultiAccount() {
+      const existing = loadAccounts();
+      if (existing) return existing;
+      const oldLots = localStorage.getItem('stockTrackerLots');
+      const defaultAccount = { id: 'acct_1', name: 'Portfolio 1', type: 'adult', color: ACCENT_COLORS[0], emoji: '🚀' };
+      const data = { accounts: [defaultAccount], activeAccountId: 'acct_1' };
+      if (oldLots) {
+        localStorage.setItem('stockTrackerLots_acct_1', oldLots);
+        if (localStorage.getItem('stockTrackerInitialized')) {
+          localStorage.setItem('stockTrackerInitialized_acct_1', 'true');
+        }
+        localStorage.removeItem('stockTrackerLots');
+        localStorage.removeItem('stockTrackerInitialized');
+      }
+      saveAccounts(data);
+      return data;
+    }
+
+    // Initialize portfolio with S&P 500 data if first run for an account
+    function initializePortfolio(accountId) {
+      const initKey = `stockTrackerInitialized_${accountId}`;
+      if (localStorage.getItem(initKey)) return loadPortfolio(accountId);
+      const lots = SP500_DATA.map(([ticker, name, price], i) => ({
+        id: 'init_' + i,
+        ticker,
+        companyName: name,
+        shares: 1,
+        purchasePrice: price || 50,
+        date: PURCHASE_DATE,
+        notes: 'S&P 500 — bought Nov 2017',
+        dividend: null,
+        goal: null,
+      }));
+      savePortfolio(lots, accountId);
+      localStorage.setItem(initKey, 'true');
+      return lots;
+    }
+
+    function generateAccountId() { return 'acct_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+
+    // ─── Price Fetching ────────────────────────────────────────────────
+    // Batch fetch current prices from Yahoo Finance
+    async function fetchPricesBatch(tickers, onProgress) {
+      const cached = loadPrices();
+      const results = { ...cached };
+      const batchSize = 25;
+      let fetched = 0;
+
+      for (let i = 0; i < tickers.length; i += batchSize) {
+        const batch = tickers.slice(i, i + batchSize);
+        const symbols = batch.join(',');
+        const urls = [
+          `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols}&range=1mo&interval=1d`,
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols}&range=1mo&interval=1d`)}`,
+        ];
+
+        for (const url of urls) {
+          try {
+            const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+            if (!resp.ok) continue;
+            const data = await resp.json();
+            if (data.spark?.result) {
+              for (const item of data.spark.result) {
+                const sym = item.symbol;
+                const closes = item.response?.[0]?.indicators?.quote?.[0]?.close?.filter(c => c != null) || [];
+                if (closes.length > 0) {
+                  results[sym] = {
+                    price: closes[closes.length - 1],
+                    previousClose: closes.length > 1 ? closes[closes.length - 2] : closes[0],
+                    sparkline: closes,
+                    lastUpdated: new Date().toISOString(),
+                  };
+                }
+              }
+              break; // Success, skip fallback URL
+            }
+          } catch (e) { continue; }
+        }
+
+        fetched += batch.length;
+        if (onProgress) onProgress(fetched, tickers.length);
+        // Small delay between batches to avoid rate limiting
+        if (i + batchSize < tickers.length) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+
+      savePrices(results);
+      return results;
+    }
+
+    // Fetch Nov 2017 historical prices to set purchase prices
+    async function fetchHistoricalPrices(tickers, onProgress) {
+      const results = {};
+      // Unix timestamp for Nov 1, 2017 and Nov 10, 2017
+      const period1 = 1509494400;
+      const period2 = 1510358400;
+      let fetched = 0;
+
+      // Process in batches of 5 (individual chart requests)
+      const batchSize = 5;
+      for (let i = 0; i < tickers.length; i += batchSize) {
+        const batch = tickers.slice(i, i + batchSize);
+        const promises = batch.map(async (ticker) => {
+          try {
+            const url = `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=1d`;
+            const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+            if (resp.ok) {
+              const data = await resp.json();
+              const closes = data.chart?.result?.[0]?.indicators?.quote?.[0]?.close?.filter(c => c != null) || [];
+              if (closes.length > 0) {
+                results[ticker] = closes[0]; // First available close price
+              }
+            }
+          } catch (e) { /* skip */ }
+        });
+
+        await Promise.all(promises);
+        fetched += batch.length;
+        if (onProgress) onProgress(fetched, tickers.length);
+        if (i + batchSize < tickers.length) {
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+
+      return results;
+    }
+
+    // Fetch company name
+    async function fetchCompanyName(ticker) {
+      try {
+        const url = `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=1d&interval=1d`;
+        const resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        if (resp.ok) {
+          const data = await resp.json();
+          const meta = data.chart?.result?.[0]?.meta;
+          return meta?.longName || meta?.shortName || null;
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    // ─── Chart Components ──────────────────────────────────────────────
+    // Configure Chart.js defaults for dark theme
+    Chart.defaults.color = '#8b949e';
+    Chart.defaults.borderColor = '#2a3144';
+    Chart.defaults.font.family = 'Inter';
+
+    function BarChartComponent({ stocks, prices }) {
+      const canvasRef = useRef(null);
+      const chartRef = useRef(null);
+
+      useEffect(() => {
+        if (!canvasRef.current || stocks.length === 0) return;
+        const top20 = [...stocks]
+          .filter(s => prices[s.ticker]?.price && s.avgCost > 0)
+          .map(s => ({ ...s, pct: ((prices[s.ticker].price - s.avgCost) / s.avgCost) * 100 }))
+          .sort((a, b) => b.pct - a.pct)
+          .slice(0, 20);
+
+        if (chartRef.current) chartRef.current.destroy();
+        chartRef.current = new Chart(canvasRef.current, {
+          type: 'bar',
+          data: {
+            labels: top20.map(s => s.ticker),
+            datasets: [{
+              data: top20.map(s => s.pct),
+              backgroundColor: top20.map(s => s.pct >= 0 ? '#00c805' : '#ff5000'),
+              borderRadius: 4,
+              borderSkipped: false,
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y.toFixed(1)}%` } } },
+            scales: {
+              y: { ticks: { callback: v => v + '%' }, grid: { color: '#1c2333' } },
+              x: { ticks: { font: { weight: '700', size: 11 } }, grid: { display: false } }
+            }
+          }
+        });
+        return () => { if (chartRef.current) chartRef.current.destroy(); };
+      }, [stocks, prices]);
+
+      return <div className="chart-container" style={{height:'280px'}}><canvas ref={canvasRef}/></div>;
+    }
+
+    function PieChartComponent({ stocks, prices }) {
+      const canvasRef = useRef(null);
+      const chartRef = useRef(null);
+
+      useEffect(() => {
+        if (!canvasRef.current || stocks.length === 0) return;
+        const top10 = [...stocks]
+          .map(s => ({ ...s, val: (prices[s.ticker]?.price || s.avgCost) * s.totalShares }))
+          .sort((a, b) => b.val - a.val)
+          .slice(0, 10);
+
+        if (chartRef.current) chartRef.current.destroy();
+        chartRef.current = new Chart(canvasRef.current, {
+          type: 'doughnut',
+          data: {
+            labels: top10.map(s => s.ticker),
+            datasets: [{ data: top10.map(s => s.val), backgroundColor: BRIGHT_COLORS.slice(0, 10), borderWidth: 2, borderColor: '#141a26', hoverOffset: 8 }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, cutout: '60%',
+            plugins: {
+              legend: { position: 'right', labels: { font: { weight: '600', size: 11 }, padding: 12, usePointStyle: true, pointStyleWidth: 8, color: '#f0f6fc' } },
+              tooltip: { callbacks: { label: c => ` ${c.label}: ${formatCurrency(c.parsed)}` } }
+            }
+          }
+        });
+        return () => { if (chartRef.current) chartRef.current.destroy(); };
+      }, [stocks, prices]);
+
+      return <div className="chart-container" style={{height:'300px'}}><canvas ref={canvasRef}/></div>;
+    }
+
+    function LineChartComponent({ lots, prices }) {
+      const canvasRef = useRef(null);
+      const chartRef = useRef(null);
+
+      useEffect(() => {
+        if (!canvasRef.current || lots.length === 0) return;
+        const sortedLots = [...lots].filter(l => l.purchasePrice > 0).sort((a, b) => new Date(a.date) - new Date(b.date));
+        if (sortedLots.length === 0) return;
+        const startDate = new Date(sortedLots[0].date);
+        const today = new Date();
+        const numPoints = 60;
+        const labels = [];
+        const investedData = [];
+        const valueData = [];
+
+        for (let i = 0; i <= numPoints; i++) {
+          const date = new Date(startDate.getTime() + (i / numPoints) * (today - startDate));
+          labels.push(date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
+          let totalInvested = 0, totalValue = 0;
+          sortedLots.forEach(lot => {
+            if (new Date(lot.date) <= date) {
+              totalInvested += lot.shares * lot.purchasePrice;
+              const currentPrice = prices[lot.ticker]?.price || lot.purchasePrice;
+              const progress = Math.min(1, (date - new Date(lot.date)) / (today - new Date(lot.date)));
+              totalValue += lot.shares * (lot.purchasePrice + (currentPrice - lot.purchasePrice) * progress);
+            }
+          });
+          investedData.push(totalInvested);
+          valueData.push(totalValue);
+        }
+
+        if (chartRef.current) chartRef.current.destroy();
+        chartRef.current = new Chart(canvasRef.current, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [
+              { label: "Current Value", data: valueData, borderColor: '#00c805', backgroundColor: 'rgba(0,200,5,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 },
+              { label: "Cost Basis", data: investedData, borderColor: '#4a5568', backgroundColor: 'rgba(74,85,104,0.05)', fill: true, tension: 0.1, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 3] }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+              legend: { labels: { font: { weight: '600', size: 11 }, usePointStyle: true, padding: 16, color: '#f0f6fc' } },
+              tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${formatCurrency(c.parsed.y)}` } }
+            },
+            scales: {
+              y: { ticks: { callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v.toFixed(0)) }, grid: { color: '#1c233380' } },
+              x: { ticks: { maxTicksLimit: 10, font: { size: 10 } }, grid: { display: false } }
+            }
+          }
+        });
+        return () => { if (chartRef.current) chartRef.current.destroy(); };
+      }, [lots, prices]);
+
+      return <div className="chart-container" style={{height:'280px'}}><canvas ref={canvasRef}/></div>;
+    }
+
+    function SparklineChart({ data, color, width = 100, height = 32 }) {
+      const canvasRef = useRef(null);
+      const chartRef = useRef(null);
+      useEffect(() => {
+        if (!canvasRef.current || !data || data.length < 2) return;
+        if (chartRef.current) chartRef.current.destroy();
+        chartRef.current = new Chart(canvasRef.current, {
+          type: 'line',
+          data: { labels: data.map((_, i) => i), datasets: [{ data, borderColor: color || '#00c805', borderWidth: 1.5, pointRadius: 0, tension: 0.4, fill: false }] },
+          options: { responsive: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } } }
+        });
+        return () => { if (chartRef.current) chartRef.current.destroy(); };
+      }, [data, color]);
+      return <canvas ref={canvasRef} width={width} height={height} />;
+    }
+
+    // ─── Loading / Initialization Screen ───────────────────────────────
+    function InitScreen({ progress, total, phase }) {
+      const pct = total > 0 ? (progress / total * 100).toFixed(0) : 0;
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4">
+          <div className="text-center max-w-md w-full">
+            <div className="text-6xl mb-6">🚀</div>
+            <h1 className="text-3xl font-black mb-2">Stock Tracker</h1>
+            <p className="text-rh-muted font-medium mb-8">
+              {phase === 'historical' ? 'Fetching Nov 2017 purchase prices...' : 'Loading current prices...'}
+            </p>
+            <div className="w-full bg-rh-surface rounded-full h-3 mb-3 overflow-hidden">
+              <div className="bg-rh-green h-full rounded-full transition-all duration-300" style={{ width: pct + '%' }}></div>
+            </div>
+            <p className="text-rh-muted text-sm font-semibold">{progress} / {total} stocks ({pct}%)</p>
+            <p className="text-rh-dim text-xs mt-4">First-time setup — this only happens once</p>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Skeleton ──────────────────────────────────────────────────────
+    function Skeleton({ className }) { return <div className={`skeleton rounded-lg ${className}`}></div>; }
+
+    // ─── Empty State ───────────────────────────────────────────────────
+    function EmptyState({ onGoToManage }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 px-4 text-center fade-in">
+          <div className="text-7xl mb-6">🚀</div>
+          <h2 className="text-3xl font-black mb-3">No Stocks Yet</h2>
+          <p className="text-rh-muted mb-6 max-w-md">Your portfolio is empty. Add your first stock and start tracking!</p>
+          <button onClick={onGoToManage} className="bg-rh-green text-black font-bold py-3 px-8 rounded-lg hover:brightness-110 transition">
+            Add First Stock
+          </button>
+        </div>
+      );
+    }
+
+    // ─── PIN Modal ─────────────────────────────────────────────────────
+    // ─── Stock Detail Modal ────────────────────────────────────────────
+    function StockDetailModal({ stock, lots, priceInfo, onClose }) {
+      const currentPrice = priceInfo?.price;
+      const totalCost = stock.avgCost * stock.totalShares;
+      const currentValue = currentPrice ? currentPrice * stock.totalShares : totalCost;
+      const gainLoss = currentValue - totalCost;
+      const gainLossPct = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
+      const isGain = gainLoss >= 0;
+      const tickerLots = lots.filter(l => l.ticker === stock.ticker);
+      const logoUrl = `https://logo.clearbit.com/${stock.ticker.toLowerCase()}.com`;
+      const [logoError, setLogoError] = useState(false);
+
+      return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+          <div className="bg-rh-card border border-rh-border rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto pop-in" onClick={e => e.stopPropagation()}>
+            <div className={`p-6 rounded-t-2xl ${isGain ? 'bg-gradient-to-r from-green-900/60 to-emerald-900/40' : 'bg-gradient-to-r from-red-900/60 to-rose-900/40'}`}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  {!logoError ? (
+                    <img src={logoUrl} alt={stock.ticker} className="w-12 h-12 rounded-xl bg-white/10 p-1" onError={() => setLogoError(true)} />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center text-2xl">{getEmoji(stock.ticker)}</div>
+                  )}
+                  <div>
+                    <h2 className="text-2xl font-black">{stock.ticker}</h2>
+                    <p className="text-white/60 font-medium text-sm">{stock.companyName}</p>
+                  </div>
+                </div>
+                <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition">✕</button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/10 rounded-xl p-3 text-center backdrop-blur-sm">
+                  <p className="text-white/50 text-xs font-semibold">Worth Now</p>
+                  <p className="text-xl font-black">{formatCurrency(currentValue)}</p>
+                </div>
+                <div className="bg-white/10 rounded-xl p-3 text-center backdrop-blur-sm">
+                  <p className="text-white/50 text-xs font-semibold">{isGain ? 'Profit' : 'Loss'}</p>
+                  <p className={`text-xl font-black ${isGain ? 'text-rh-green' : 'text-rh-red'}`}>{isGain ? '+' : ''}{formatCurrency(gainLoss)}</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="bg-rh-surface rounded-xl p-4 mb-4 border border-rh-border">
+                <p className="text-sm text-rh-muted leading-relaxed">💡 {getDescription(stock.ticker)}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-rh-surface rounded-xl p-3 border border-rh-border">
+                  <p className="text-xs text-rh-dim font-semibold">Shares</p>
+                  <p className="text-lg font-black">{stock.totalShares}</p>
+                </div>
+                <div className="bg-rh-surface rounded-xl p-3 border border-rh-border">
+                  <p className="text-xs text-rh-dim font-semibold">Current Price</p>
+                  <p className="text-lg font-black">{currentPrice ? formatCurrency(currentPrice) : '—'}</p>
+                </div>
+                <div className="bg-rh-surface rounded-xl p-3 border border-rh-border">
+                  <p className="text-xs text-rh-dim font-semibold">Cost Basis</p>
+                  <p className="text-lg font-black">{formatCurrency(totalCost)}</p>
+                </div>
+                <div className="bg-rh-surface rounded-xl p-3 border border-rh-border">
+                  <p className="text-xs text-rh-dim font-semibold">Return</p>
+                  <p className={`text-lg font-black ${isGain ? 'text-rh-green' : 'text-rh-red'}`}>{formatPercent(gainLossPct)}</p>
+                </div>
+              </div>
+              {priceInfo?.sparkline && (
+                <div className="bg-rh-surface rounded-xl p-4 mb-4 flex items-center justify-center border border-rh-border">
+                  <SparklineChart data={priceInfo.sparkline} color={isGain ? '#00c805' : '#ff5000'} width={280} height={50} />
+                </div>
+              )}
+              <h4 className="font-bold text-sm mb-2 text-rh-muted">Positions:</h4>
+              {tickerLots.map(lot => (
+                <div key={lot.id} className="bg-rh-surface rounded-lg p-3 mb-2 text-sm border border-rh-border">
+                  <div className="flex justify-between">
+                    <span className="font-bold">{lot.shares} share{lot.shares !== 1 ? 's' : ''} @ {formatCurrency(lot.purchasePrice)}</span>
+                    <span className="text-rh-dim font-medium">{formatDate(lot.date)}</span>
+                  </div>
+                  {lot.notes && <p className="text-xs text-rh-dim mt-1">{lot.notes}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Portfolio Summary ─────────────────────────────────────────────
+    function PortfolioSummary({ stocks, prices, lots }) {
+      let totalInvested = 0, totalValue = 0, stocksUp = 0, stocksDown = 0;
+      stocks.forEach(s => {
+        if (s.avgCost <= 0) return;
+        const cost = s.avgCost * s.totalShares;
+        totalInvested += cost;
+        const p = prices[s.ticker]?.price;
+        totalValue += p ? p * s.totalShares : cost;
+        if (p) { p * s.totalShares > cost ? stocksUp++ : stocksDown++; }
+      });
+      const totalGain = totalValue - totalInvested;
+      const totalPct = totalInvested > 0 ? (totalGain / totalInvested) * 100 : 0;
+      const isGain = totalGain >= 0;
+
+      return (
+        <div className="mb-6 fade-in">
+          <div className="flex items-end gap-3 mb-1">
+            <h2 className="text-4xl font-black tracking-tight">{formatCurrency(totalValue)}</h2>
+          </div>
+          <div className="flex items-center gap-2 mb-4">
+            <span className={`text-lg font-bold ${isGain ? 'text-rh-green' : 'text-rh-red'}`}>
+              {isGain ? '▲' : '▼'} {formatCurrency(Math.abs(totalGain))} ({formatPercent(totalPct)})
+            </span>
+            <span className="text-rh-dim text-sm">all time</span>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-rh-card border border-rh-border rounded-xl p-3 text-center">
+              <p className="text-2xl font-black text-rh-green">{stocksUp}</p>
+              <p className="text-xs text-rh-dim font-semibold">Winners</p>
+            </div>
+            <div className="bg-rh-card border border-rh-border rounded-xl p-3 text-center">
+              <p className="text-2xl font-black text-rh-red">{stocksDown}</p>
+              <p className="text-xs text-rh-dim font-semibold">Losers</p>
+            </div>
+            <div className="bg-rh-card border border-rh-border rounded-xl p-3 text-center">
+              <p className="text-2xl font-black">{stocks.filter(s => s.avgCost > 0).length}</p>
+              <p className="text-xs text-rh-dim font-semibold">Holdings</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Stock Table Row ───────────────────────────────────────────────
+    function StockRow({ stock, priceInfo, onClick, rank }) {
+      const currentPrice = priceInfo?.price;
+      const totalCost = stock.avgCost * stock.totalShares;
+      const currentValue = currentPrice ? currentPrice * stock.totalShares : totalCost;
+      const gainLoss = currentValue - totalCost;
+      const gainLossPct = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
+      const isGain = gainLoss >= 0;
+      const dayChange = priceInfo?.previousClose ? ((currentPrice - priceInfo.previousClose) / priceInfo.previousClose * 100) : 0;
+
+      return (
+        <tr onClick={onClick} className="border-b border-rh-border/50 hover:bg-rh-surface/50 cursor-pointer transition-colors group">
+          <td className="py-3 px-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm">{getEmoji(stock.ticker)}</span>
+              <div>
+                <p className="font-bold text-sm">{stock.ticker}</p>
+                <p className="text-xs text-rh-dim truncate max-w-[120px] sm:max-w-[200px]">{stock.companyName}</p>
+              </div>
+            </div>
+          </td>
+          <td className="py-3 px-2 hidden sm:table-cell">
+            {priceInfo?.sparkline && <SparklineChart data={priceInfo.sparkline} color={isGain ? '#00c805' : '#ff5000'} width={80} height={28} />}
+          </td>
+          <td className="py-3 px-2 text-right">
+            <p className="font-bold text-sm">{currentPrice ? formatCurrency(currentPrice) : '—'}</p>
+            <p className={`text-xs font-semibold ${dayChange >= 0 ? 'text-rh-green' : 'text-rh-red'}`}>
+              {dayChange !== 0 ? formatPercent(dayChange) : ''}
+            </p>
+          </td>
+          <td className="py-3 px-2 text-right hidden md:table-cell">
+            <p className="font-bold text-sm">{formatCurrency(currentValue)}</p>
+            <p className="text-xs text-rh-dim">{stock.totalShares} share{stock.totalShares !== 1 ? 's' : ''}</p>
+          </td>
+          <td className="py-3 px-3 text-right">
+            <span className={`inline-block px-2 py-1 rounded-md text-xs font-bold ${isGain ? 'bg-green-900/40 text-rh-green' : 'bg-red-900/40 text-rh-red'}`}>
+              {stock.avgCost > 0 ? formatPercent(gainLossPct) : '—'}
+            </span>
+          </td>
+        </tr>
+      );
+    }
+
+    // ─── Top Movers Cards ──────────────────────────────────────────────
+    function TopMovers({ stocks, prices }) {
+      const withGains = stocks
+        .filter(s => prices[s.ticker]?.price && s.avgCost > 0)
+        .map(s => ({ ...s, gainPct: ((prices[s.ticker].price - s.avgCost) / s.avgCost) * 100 }));
+      if (withGains.length === 0) return null;
+
+      const sorted = [...withGains].sort((a, b) => b.gainPct - a.gainPct);
+      const top3 = sorted.slice(0, 3);
+      const bottom3 = sorted.slice(-3).reverse();
+
+      return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+          <div className="bg-rh-card border border-rh-border rounded-xl p-4">
+            <h4 className="text-sm font-bold text-rh-green mb-3 flex items-center gap-2">🏆 Top Gainers</h4>
+            {top3.map((s, i) => (
+              <div key={s.ticker} className="flex items-center justify-between py-2 border-b border-rh-border/30 last:border-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-rh-dim text-xs font-bold w-4">{i + 1}</span>
+                  <span className="text-sm">{getEmoji(s.ticker)}</span>
+                  <span className="font-bold text-sm">{s.ticker}</span>
+                </div>
+                <span className="text-rh-green font-bold text-sm">+{s.gainPct.toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+          <div className="bg-rh-card border border-rh-border rounded-xl p-4">
+            <h4 className="text-sm font-bold text-rh-red mb-3 flex items-center gap-2">📉 Biggest Losers</h4>
+            {bottom3.map((s, i) => (
+              <div key={s.ticker} className="flex items-center justify-between py-2 border-b border-rh-border/30 last:border-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-rh-dim text-xs font-bold w-4">{i + 1}</span>
+                  <span className="text-sm">{getEmoji(s.ticker)}</span>
+                  <span className="font-bold text-sm">{s.ticker}</span>
+                </div>
+                <span className="text-rh-red font-bold text-sm">{s.gainPct.toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Sort Icon (must be outside component to avoid re-mount) ──────
+    function SortIcon({ col, sortBy, sortDir }) {
+      if (sortBy !== col) return <span className="text-rh-dim ml-1">↕</span>;
+      return <span className="text-rh-green ml-1">{sortDir === 'desc' ? '↓' : '↑'}</span>;
+    }
+
+    // ─── Kids Dashboard ────────────────────────────────────────────────
+    function KidsDashboard({ lots, stocks, prices, loading, onGoToManage }) {
+      const [selectedStock, setSelectedStock] = useState(null);
+      const [search, setSearch] = useState('');
+      const [sortBy, setSortBy] = useState('gainPct');
+      const [sortDir, setSortDir] = useState('desc');
+
+      if (lots.length === 0) return <EmptyState onGoToManage={onGoToManage} />;
+
+      // Compute filtered/sorted stocks directly (no useMemo to avoid re-render loops)
+      let filteredStocks = stocks.filter(s => s.avgCost > 0);
+      if (search) {
+        const q = search.toLowerCase();
+        filteredStocks = filteredStocks.filter(s => s.ticker.toLowerCase().includes(q) || s.companyName.toLowerCase().includes(q));
+      }
+      filteredStocks = [...filteredStocks].sort((a, b) => {
+        let aVal, bVal;
+        const aPrice = prices[a.ticker]?.price || a.avgCost;
+        const bPrice = prices[b.ticker]?.price || b.avgCost;
+        switch (sortBy) {
+          case 'gainPct':
+            aVal = a.avgCost > 0 ? (aPrice - a.avgCost) / a.avgCost : 0;
+            bVal = b.avgCost > 0 ? (bPrice - b.avgCost) / b.avgCost : 0;
+            break;
+          case 'value':
+            aVal = aPrice * a.totalShares;
+            bVal = bPrice * b.totalShares;
+            break;
+          case 'ticker':
+            aVal = a.ticker; bVal = b.ticker;
+            return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+          case 'price':
+            aVal = aPrice; bVal = bPrice;
+            break;
+          default:
+            aVal = 0; bVal = 0;
+        }
+        return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
+      });
+
+      const handleSort = (col) => {
+        if (sortBy === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+        else { setSortBy(col); setSortDir('desc'); }
+      };
+
+      return (
+        <div className="max-w-5xl mx-auto p-4 pb-24">
+          <PortfolioSummary stocks={stocks} prices={prices} lots={lots} />
+          <TopMovers stocks={stocks} prices={prices} />
+
+          {/* Charts section */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <div className="bg-rh-card border border-rh-border rounded-xl p-4">
+              <h3 className="font-bold text-sm text-rh-muted mb-3">📊 Performance (Top 20)</h3>
+              <BarChartComponent stocks={stocks} prices={prices} />
+            </div>
+            <div className="bg-rh-card border border-rh-border rounded-xl p-4">
+              <h3 className="font-bold text-sm text-rh-muted mb-3">🍕 Allocation (Top 10)</h3>
+              <PieChartComponent stocks={stocks} prices={prices} />
+            </div>
+          </div>
+
+          <div className="bg-rh-card border border-rh-border rounded-xl p-4 mb-6">
+            <h3 className="font-bold text-sm text-rh-muted mb-3">📈 Portfolio Value Over Time</h3>
+            <LineChartComponent lots={lots} prices={prices} />
+          </div>
+
+          {/* Stock table */}
+          <div className="bg-rh-card border border-rh-border rounded-xl overflow-hidden mb-6">
+            <div className="p-4 border-b border-rh-border flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+              <h3 className="font-bold">All Holdings ({filteredStocks.length})</h3>
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="🔍 Search ticker or company..."
+                className="w-full sm:w-64 px-3 py-2 rounded-lg text-sm"
+              />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-xs text-rh-dim font-semibold uppercase border-b border-rh-border">
+                    <th className="text-left py-2 px-3 cursor-pointer hover:text-rh-text" onClick={() => handleSort('ticker')}>
+                      Stock <SortIcon col="ticker" sortBy={sortBy} sortDir={sortDir} />
+                    </th>
+                    <th className="py-2 px-2 hidden sm:table-cell">Chart</th>
+                    <th className="text-right py-2 px-2 cursor-pointer hover:text-rh-text" onClick={() => handleSort('price')}>
+                      Price <SortIcon col="price" sortBy={sortBy} sortDir={sortDir} />
+                    </th>
+                    <th className="text-right py-2 px-2 hidden md:table-cell cursor-pointer hover:text-rh-text" onClick={() => handleSort('value')}>
+                      Value <SortIcon col="value" sortBy={sortBy} sortDir={sortDir} />
+                    </th>
+                    <th className="text-right py-2 px-3 cursor-pointer hover:text-rh-text" onClick={() => handleSort('gainPct')}>
+                      Return <SortIcon col="gainPct" sortBy={sortBy} sortDir={sortDir} />
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredStocks.map((s, i) => (
+                    <StockRow key={s.ticker} stock={s} priceInfo={prices[s.ticker]} onClick={() => setSelectedStock(s)} rank={i + 1} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {selectedStock && (
+            <StockDetailModal stock={selectedStock} lots={lots} priceInfo={prices[selectedStock.ticker]} onClose={() => setSelectedStock(null)} />
+          )}
+        </div>
+      );
+    }
+
+    // ─── Add/Edit Lot Form ─────────────────────────────────────────────
+    function LotForm({ lot, onSave, onCancel }) {
+      const [form, setForm] = useState({
+        ticker: lot?.ticker || '', companyName: lot?.companyName || '', shares: lot?.shares || '',
+        purchasePrice: lot?.purchasePrice || '', date: lot?.date || new Date().toISOString().split('T')[0],
+        notes: lot?.notes || '', dividend: lot?.dividend || '', goal: lot?.goal || '',
+      });
+      const [fetching, setFetching] = useState(false);
+
+      const handleTickerBlur = async () => {
+        if (form.ticker && !form.companyName) {
+          setFetching(true);
+          const name = await fetchCompanyName(form.ticker.toUpperCase());
+          if (name) setForm(f => ({ ...f, companyName: name }));
+          setFetching(false);
+        }
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!form.ticker || !form.shares || !form.purchasePrice || !form.date) return;
+        onSave({
+          id: lot?.id || Date.now().toString() + Math.random().toString(36).slice(2, 6),
+          ticker: form.ticker.toUpperCase().trim(), companyName: form.companyName.trim(),
+          shares: parseFloat(form.shares), purchasePrice: parseFloat(form.purchasePrice),
+          date: form.date, notes: form.notes.trim(),
+          dividend: form.dividend ? parseFloat(form.dividend) : null,
+          goal: form.goal ? parseFloat(form.goal) : null,
+        });
+      };
+
+      const isValid = form.ticker && form.shares > 0 && form.purchasePrice > 0 && form.date;
+
+      return (
+        <form onSubmit={handleSubmit} className="bg-rh-card border border-rh-border rounded-xl p-6 fade-in">
+          <h3 className="font-bold mb-4">{lot ? '✏️ Edit Position' : '➕ Add Stock'}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Ticker *</label>
+              <input type="text" value={form.ticker} onChange={e => setForm({...form, ticker: e.target.value})} onBlur={handleTickerBlur}
+                placeholder="AAPL" className="w-full px-3 py-2.5 rounded-lg font-bold uppercase" maxLength={10} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Company {fetching && <span className="text-rh-green">(looking up...)</span>}</label>
+              <input type="text" value={form.companyName} onChange={e => setForm({...form, companyName: e.target.value})} placeholder="Auto-filled" className="w-full px-3 py-2.5 rounded-lg" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Shares *</label>
+              <input type="number" step="any" min="0.001" value={form.shares} onChange={e => setForm({...form, shares: e.target.value})} placeholder="10" className="w-full px-3 py-2.5 rounded-lg font-bold" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Price ($) *</label>
+              <input type="number" step="0.01" min="0.01" value={form.purchasePrice} onChange={e => setForm({...form, purchasePrice: e.target.value})} placeholder="150.00" className="w-full px-3 py-2.5 rounded-lg font-bold" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Date *</label>
+              <input type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} className="w-full px-3 py-2.5 rounded-lg font-bold" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Dividend ($/share/yr)</label>
+              <input type="number" step="0.01" min="0" value={form.dividend} onChange={e => setForm({...form, dividend: e.target.value})} placeholder="Optional" className="w-full px-3 py-2.5 rounded-lg" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Goal ($)</label>
+              <input type="number" step="0.01" min="0" value={form.goal} onChange={e => setForm({...form, goal: e.target.value})} placeholder="Target value" className="w-full px-3 py-2.5 rounded-lg" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Notes</label>
+              <input type="text" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} placeholder="Birthday gift" className="w-full px-3 py-2.5 rounded-lg" />
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <button type="button" onClick={onCancel} className="flex-1 py-3 rounded-lg border border-rh-border font-bold text-rh-muted hover:bg-rh-surface transition">Cancel</button>
+            <button type="submit" disabled={!isValid} className="flex-1 py-3 rounded-lg bg-rh-green text-black font-bold hover:brightness-110 transition disabled:opacity-30">
+              {lot ? 'Save' : 'Add Stock'}
+            </button>
+          </div>
+        </form>
+      );
+    }
+
+    // ─── Manage View ───────────────────────────────────────────────────
+    function ManageView({ lots, setLots, prices, accounts, activeAccountId, onAccountsUpdate, onSwitchAccount }) {
+      const [showForm, setShowForm] = useState(false);
+      const [editingLot, setEditingLot] = useState(null);
+      const [search, setSearch] = useState('');
+      const [showAccounts, setShowAccounts] = useState(false);
+
+      const handleSave = (lot) => {
+        setLots(prev => {
+          const exists = prev.findIndex(l => l.id === lot.id);
+          if (exists >= 0) { const u = [...prev]; u[exists] = lot; return u; }
+          return [...prev, lot];
+        });
+        setShowForm(false); setEditingLot(null);
+      };
+
+      const handleDelete = (id) => { if (confirm('Delete this position?')) setLots(prev => prev.filter(l => l.id !== id)); };
+
+      const activeAccount = accounts.find(a => a.id === activeAccountId);
+
+      const handleExportCSV = () => {
+        const headers = ['Ticker','Company','Shares','Purchase Price','Date','Notes','Current Price','Current Value','Gain/Loss','Gain %'];
+        const rows = lots.filter(l => l.purchasePrice > 0).map(l => {
+          const cp = prices[l.ticker]?.price || ''; const cv = cp ? (cp * l.shares).toFixed(2) : '';
+          const gl = cp ? ((cp * l.shares) - (l.purchasePrice * l.shares)).toFixed(2) : '';
+          const pct = cp && l.purchasePrice ? (((cp - l.purchasePrice) / l.purchasePrice) * 100).toFixed(2) + '%' : '';
+          return [l.ticker, l.companyName, l.shares, l.purchasePrice, l.date, l.notes || '', cp, cv, gl, pct];
+        });
+        const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${activeAccount?.name || 'portfolio'}-stocks.csv`; a.click();
+      };
+
+      const handleReset = () => {
+        if (!activeAccountId) return;
+        if (confirm(`Reset "${activeAccount?.name}" to default S&P 500? This cannot be undone.`)) {
+          localStorage.removeItem(`stockTrackerInitialized_${activeAccountId}`);
+          localStorage.removeItem(`stockTrackerLots_${activeAccountId}`);
+          const newLots = initializePortfolio(activeAccountId);
+          setLots(newLots);
+        }
+      };
+
+      const filteredLots = useMemo(() => {
+        if (!search) return lots.filter(l => l.purchasePrice > 0);
+        const q = search.toLowerCase();
+        return lots.filter(l => l.purchasePrice > 0 && (l.ticker.toLowerCase().includes(q) || l.companyName.toLowerCase().includes(q)));
+      }, [lots, search]);
+
+      const grouped = useMemo(() => {
+        const map = {};
+        filteredLots.forEach(l => {
+          if (!map[l.ticker]) map[l.ticker] = { ticker: l.ticker, companyName: l.companyName, lots: [], totalShares: 0, totalCost: 0 };
+          map[l.ticker].lots.push(l);
+          map[l.ticker].totalShares += l.shares;
+          map[l.ticker].totalCost += l.shares * l.purchasePrice;
+          if (l.companyName) map[l.ticker].companyName = l.companyName;
+        });
+        return Object.values(map);
+      }, [filteredLots]);
+
+      return (
+        <div className="max-w-5xl mx-auto p-4 pb-24">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+            <h2 className="text-2xl font-black">⚙️ Manage Portfolio</h2>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={handleExportCSV} className="px-3 py-2 bg-rh-surface border border-rh-border rounded-lg font-bold text-xs text-rh-muted hover:bg-rh-card transition">📄 CSV</button>
+              <button onClick={() => setShowAccounts(!showAccounts)} className={`px-3 py-2 bg-rh-surface border border-rh-border rounded-lg font-bold text-xs transition ${showAccounts ? 'text-rh-green border-rh-green' : 'text-rh-muted hover:bg-rh-card'}`}>👥 Accounts</button>
+              <button onClick={handleReset} className="px-3 py-2 bg-rh-surface border border-rh-border rounded-lg font-bold text-xs text-rh-muted hover:bg-rh-card transition">🔄 Reset</button>
+              <button onClick={() => { setShowForm(true); setEditingLot(null); }} className="px-3 py-2 bg-rh-green text-black rounded-lg font-bold text-xs hover:brightness-110 transition">+ Add</button>
+            </div>
+          </div>
+
+          {showAccounts && (
+            <AccountManager accounts={accounts} activeAccountId={activeAccountId} onUpdate={onAccountsUpdate} onSwitch={onSwitchAccount} prices={prices} />
+          )}
+
+          {(showForm || editingLot) && (
+            <div className="mb-6"><LotForm lot={editingLot} onSave={handleSave} onCancel={() => { setShowForm(false); setEditingLot(null); }} /></div>
+          )}
+
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search stocks..." className="w-full px-3 py-2.5 rounded-lg text-sm mb-4" />
+
+          <div className="space-y-3">
+            {grouped.map(group => {
+              const currentPrice = prices[group.ticker]?.price;
+              const currentValue = currentPrice ? currentPrice * group.totalShares : group.totalCost;
+              const gainLoss = currentValue - group.totalCost;
+              const pct = group.totalCost > 0 ? (gainLoss / group.totalCost) * 100 : 0;
+              const isGain = gainLoss >= 0;
+
+              return (
+                <div key={group.ticker} className="bg-rh-card border border-rh-border rounded-xl overflow-hidden fade-in">
+                  <div className="p-3 flex flex-wrap items-center justify-between gap-2 border-b border-rh-border/50">
+                    <div className="flex items-center gap-2">
+                      <span>{getEmoji(group.ticker)}</span>
+                      <div>
+                        <span className="font-bold text-sm">{group.ticker}</span>
+                        <span className="text-rh-dim text-xs ml-2">{group.totalShares} shares</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-bold text-sm">{formatCurrency(currentValue)}</span>
+                      <span className={`text-xs font-bold ${isGain ? 'text-rh-green' : 'text-rh-red'}`}>{formatPercent(pct)}</span>
+                    </div>
+                  </div>
+                  {group.lots.some(l => l.goal) && (() => {
+                    const goalLot = group.lots.find(l => l.goal);
+                    const progress = Math.min(100, (currentValue / goalLot.goal) * 100);
+                    return (
+                      <div className="px-3 py-2 border-b border-rh-border/30">
+                        <div className="flex justify-between text-xs font-bold text-rh-dim mb-1">
+                          <span>🎯 Goal: {formatCurrency(goalLot.goal)}</span><span>{progress.toFixed(0)}%</span>
+                        </div>
+                        <div className="w-full bg-rh-surface rounded-full h-1.5">
+                          <div className="bg-rh-green h-1.5 rounded-full transition-all" style={{width:`${progress}%`}}></div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {group.lots.map(lot => (
+                    <div key={lot.id} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-rh-border/20 last:border-0 hover:bg-rh-surface/30 transition text-sm">
+                      <div>
+                        <span className="font-semibold">{lot.shares} @ {formatCurrency(lot.purchasePrice)}</span>
+                        <span className="text-rh-dim ml-2 text-xs">{formatDate(lot.date)}</span>
+                        {lot.notes && <span className="text-rh-dim text-xs ml-2">({lot.notes})</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => { setEditingLot(lot); setShowForm(false); }} className="text-rh-dim hover:text-rh-green transition text-xs">✏️</button>
+                        <button onClick={() => handleDelete(lot.id)} className="text-rh-dim hover:text-rh-red transition text-xs">🗑️</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Account Switcher (nav pills) ─────────────────────────────────
+    function AccountSwitcher({ accounts, activeAccountId, onSwitch, onAdd }) {
+      return (
+        <div className="flex items-center gap-1.5">
+          {accounts.map(acct => (
+            <button key={acct.id} onClick={() => onSwitch(acct.id)} title={acct.name}
+              className={`w-9 h-9 rounded-full flex items-center justify-center text-base font-bold transition-all ${acct.id === activeAccountId ? 'ring-2 ring-offset-2 ring-offset-rh-bg scale-110' : 'opacity-50 hover:opacity-80'}`}
+              style={{ backgroundColor: acct.color + '22', borderColor: acct.color, border: `2px solid ${acct.color}`, ...(acct.id === activeAccountId ? { boxShadow: `0 0 12px ${acct.color}44`, ringColor: acct.color } : {}) }}>
+              {acct.emoji}
+            </button>
+          ))}
+          {accounts.length < 4 && (
+            <button onClick={onAdd} className="w-9 h-9 rounded-full border-2 border-dashed border-rh-dim flex items-center justify-center text-rh-dim hover:border-rh-muted hover:text-rh-muted transition text-lg" title="Add account">
+              +
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // ─── Account Form (create/edit) ─────────────────────────────────────
+    function AccountForm({ account, onSave, onCancel, usedColors }) {
+      const [name, setName] = useState(account?.name || '');
+      const [type, setType] = useState(account?.type || 'kid');
+      const [emoji, setEmoji] = useState(account?.emoji || '🚀');
+      const [color, setColor] = useState(account?.color || ACCENT_COLORS.find(c => !usedColors.includes(c)) || ACCENT_COLORS[0]);
+      const [initSP500, setInitSP500] = useState(!account);
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+        onSave({ name: name.trim(), type, emoji, color, initSP500: !account && initSP500 });
+      };
+
+      return (
+        <div className="bg-rh-card border border-rh-border rounded-xl p-6 fade-in">
+          <h3 className="font-bold text-lg mb-4">{account ? '✏️ Edit Account' : '➕ New Account'}</h3>
+          <form onSubmit={handleSubmit}>
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Name *</label>
+              <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Sophia" className="w-full px-3 py-2.5 rounded-lg font-bold" maxLength={20} />
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Type</label>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setType('kid')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition ${type === 'kid' ? 'bg-rh-blue text-black' : 'bg-rh-surface border border-rh-border text-rh-muted'}`}>
+                  👦 Kid
+                </button>
+                <button type="button" onClick={() => setType('adult')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition ${type === 'adult' ? 'bg-rh-blue text-black' : 'bg-rh-surface border border-rh-border text-rh-muted'}`}>
+                  👨 Adult
+                </button>
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Avatar</label>
+              <div className="grid grid-cols-8 gap-1.5">
+                {AVATAR_EMOJIS.map(e => (
+                  <button key={e} type="button" onClick={() => setEmoji(e)}
+                    className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg transition ${emoji === e ? 'bg-rh-surface ring-2 ring-rh-green scale-110' : 'hover:bg-rh-surface/50'}`}>
+                    {e}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Color</label>
+              <div className="flex gap-2">
+                {ACCENT_COLORS.map(c => (
+                  <button key={c} type="button" onClick={() => setColor(c)}
+                    className={`w-10 h-10 rounded-full transition ${color === c ? 'ring-2 ring-offset-2 ring-offset-rh-bg scale-110' : 'opacity-60 hover:opacity-90'}`}
+                    style={{ backgroundColor: c, ringColor: c }} />
+                ))}
+              </div>
+            </div>
+            {!account && (
+              <label className="flex items-center gap-2 mb-4 cursor-pointer">
+                <input type="checkbox" checked={initSP500} onChange={e => setInitSP500(e.target.checked)} className="w-4 h-4 accent-green-500" />
+                <span className="text-sm text-rh-muted font-semibold">Start with S&P 500 portfolio (490 stocks from Nov 2017)</span>
+              </label>
+            )}
+            <div className="flex gap-3">
+              <button type="button" onClick={onCancel} className="flex-1 py-3 rounded-lg border border-rh-border font-bold text-rh-muted hover:bg-rh-surface transition">Cancel</button>
+              <button type="submit" disabled={!name.trim()} className="flex-1 py-3 rounded-lg bg-rh-green text-black font-bold hover:brightness-110 transition disabled:opacity-30">
+                {account ? 'Save' : 'Create Account'}
+              </button>
+            </div>
+          </form>
+        </div>
+      );
+    }
+
+    // ─── Account Manager Panel ──────────────────────────────────────────
+    function AccountManager({ accounts, activeAccountId, onUpdate, onSwitch, prices }) {
+      const [showForm, setShowForm] = useState(false);
+      const [editingAccount, setEditingAccount] = useState(null);
+
+      const handleSave = (formData) => {
+        const acctData = loadAccounts();
+        if (editingAccount) {
+          const idx = acctData.accounts.findIndex(a => a.id === editingAccount.id);
+          if (idx >= 0) {
+            acctData.accounts[idx] = { ...acctData.accounts[idx], name: formData.name, type: formData.type, emoji: formData.emoji, color: formData.color };
+          }
+        } else {
+          const newId = generateAccountId();
+          const newAcct = { id: newId, name: formData.name, type: formData.type, emoji: formData.emoji, color: formData.color };
+          acctData.accounts.push(newAcct);
+          if (formData.initSP500) initializePortfolio(newId);
+          else { savePortfolio([], newId); localStorage.setItem(`stockTrackerInitialized_${newId}`, 'true'); }
+        }
+        saveAccounts(acctData);
+        onUpdate(acctData);
+        setShowForm(false);
+        setEditingAccount(null);
+      };
+
+      const handleDelete = (acct) => {
+        if (!confirm(`Delete "${acct.name}"? This will remove all their stocks.`)) return;
+        const acctData = loadAccounts();
+        acctData.accounts = acctData.accounts.filter(a => a.id !== acct.id);
+        localStorage.removeItem(`stockTrackerLots_${acct.id}`);
+        localStorage.removeItem(`stockTrackerInitialized_${acct.id}`);
+        if (acctData.activeAccountId === acct.id && acctData.accounts.length > 0) {
+          acctData.activeAccountId = acctData.accounts[0].id;
+        }
+        saveAccounts(acctData);
+        onUpdate(acctData);
+        if (acct.id === activeAccountId && acctData.accounts.length > 0) onSwitch(acctData.accounts[0].id);
+      };
+
+      const usedColors = accounts.filter(a => a.id !== editingAccount?.id).map(a => a.color);
+
+      return (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-sm text-rh-muted uppercase">Accounts ({accounts.length}/4)</h3>
+            {accounts.length < 4 && !showForm && !editingAccount && (
+              <button onClick={() => setShowForm(true)} className="px-3 py-1.5 bg-rh-green text-black rounded-lg font-bold text-xs hover:brightness-110 transition">+ Add</button>
+            )}
+          </div>
+          {(showForm || editingAccount) && (
+            <div className="mb-4">
+              <AccountForm account={editingAccount} onSave={handleSave} onCancel={() => { setShowForm(false); setEditingAccount(null); }} usedColors={usedColors} />
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {accounts.map(acct => {
+              const lots = loadPortfolio(acct.id);
+              let totalValue = 0, totalCost = 0;
+              lots.forEach(l => { totalCost += l.shares * l.purchasePrice; const p = prices[l.ticker]?.price; totalValue += p ? p * l.shares : l.shares * l.purchasePrice; });
+              const isActive = acct.id === activeAccountId;
+              return (
+                <div key={acct.id} className={`bg-rh-card border rounded-xl p-4 cursor-pointer transition hover:bg-rh-surface/50 ${isActive ? 'border-2' : 'border-rh-border'}`}
+                  style={isActive ? { borderColor: acct.color } : {}} onClick={() => onSwitch(acct.id)}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{acct.emoji}</span>
+                      <div>
+                        <p className="font-bold text-sm">{acct.name}</p>
+                        <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${acct.type === 'kid' ? 'bg-blue-900/40 text-rh-blue' : 'bg-purple-900/40 text-purple-400'}`}>
+                          {acct.type === 'kid' ? '👦 Kid' : '👨 Adult'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => { setEditingAccount(acct); setShowForm(false); }} className="p-1.5 rounded-lg hover:bg-rh-surface text-rh-dim hover:text-rh-text transition text-xs">✏️</button>
+                      {accounts.length > 1 && <button onClick={() => handleDelete(acct)} className="p-1.5 rounded-lg hover:bg-rh-surface text-rh-dim hover:text-rh-red transition text-xs">🗑️</button>}
+                    </div>
+                  </div>
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-lg font-black" style={{ color: acct.color }}>{formatCurrency(totalValue)}</p>
+                      <p className="text-xs text-rh-dim">{lots.length} positions</p>
+                    </div>
+                    {totalCost > 0 && (
+                      <span className={`text-xs font-bold ${totalValue >= totalCost ? 'text-rh-green' : 'text-rh-red'}`}>
+                        {formatPercent((totalValue - totalCost) / totalCost * 100)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Compare View ───────────────────────────────────────────────────
+    function CompareView({ accounts, prices }) {
+      const canvasBarRef = useRef(null);
+      const canvasLineRef = useRef(null);
+      const chartBarRef = useRef(null);
+      const chartLineRef = useRef(null);
+
+      const accountData = useMemo(() => accounts.map(acct => {
+        const lots = loadPortfolio(acct.id);
+        let totalCost = 0, totalValue = 0, holdings = 0;
+        lots.forEach(l => {
+          if (l.purchasePrice <= 0) return;
+          totalCost += l.shares * l.purchasePrice;
+          const p = prices[l.ticker]?.price;
+          totalValue += p ? p * l.shares : l.shares * l.purchasePrice;
+          holdings++;
+        });
+        const gain = totalValue - totalCost;
+        const pct = totalCost > 0 ? (gain / totalCost) * 100 : 0;
+        return { ...acct, lots, totalCost, totalValue, gain, pct, holdings };
+      }), [accounts, prices]);
+
+      // Performance bar chart
+      useEffect(() => {
+        if (!canvasBarRef.current || accountData.length === 0) return;
+        if (chartBarRef.current) chartBarRef.current.destroy();
+        chartBarRef.current = new Chart(canvasBarRef.current, {
+          type: 'bar',
+          data: {
+            labels: accountData.map(a => a.emoji + ' ' + a.name),
+            datasets: [{
+              data: accountData.map(a => a.pct),
+              backgroundColor: accountData.map(a => a.color),
+              borderRadius: 6,
+              borderSkipped: false,
+              barPercentage: 0.6,
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y.toFixed(2)}%` } } },
+            scales: {
+              y: { ticks: { callback: v => v + '%', color: '#8b949e' }, grid: { color: '#1c233380' } },
+              x: { ticks: { font: { weight: '700', size: 12 }, color: '#f0f6fc' }, grid: { display: false } }
+            }
+          }
+        });
+        return () => { if (chartBarRef.current) chartBarRef.current.destroy(); };
+      }, [accountData]);
+
+      // Growth line chart
+      useEffect(() => {
+        if (!canvasLineRef.current || accountData.length === 0) return;
+        if (chartLineRef.current) chartLineRef.current.destroy();
+        const numPoints = 60;
+        const today = new Date();
+        let earliestDate = today;
+        accountData.forEach(a => a.lots.forEach(l => { const d = new Date(l.date); if (d < earliestDate) earliestDate = d; }));
+        const labels = [];
+        for (let i = 0; i <= numPoints; i++) {
+          const date = new Date(earliestDate.getTime() + (i / numPoints) * (today - earliestDate));
+          labels.push(date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
+        }
+        const datasets = accountData.map(acct => {
+          const values = [];
+          for (let i = 0; i <= numPoints; i++) {
+            const date = new Date(earliestDate.getTime() + (i / numPoints) * (today - earliestDate));
+            let total = 0;
+            acct.lots.forEach(lot => {
+              if (lot.purchasePrice <= 0 || new Date(lot.date) > date) return;
+              const currentPrice = prices[lot.ticker]?.price || lot.purchasePrice;
+              const progress = Math.min(1, (date - new Date(lot.date)) / (today - new Date(lot.date)));
+              total += lot.shares * (lot.purchasePrice + (currentPrice - lot.purchasePrice) * progress);
+            });
+            values.push(total);
+          }
+          return {
+            label: acct.emoji + ' ' + acct.name,
+            data: values,
+            borderColor: acct.color,
+            backgroundColor: acct.color + '15',
+            fill: false,
+            tension: 0.4,
+            pointRadius: 0,
+            borderWidth: 2.5,
+          };
+        });
+        chartLineRef.current = new Chart(canvasLineRef.current, {
+          type: 'line',
+          data: { labels, datasets },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+              legend: { labels: { font: { weight: '600', size: 12 }, usePointStyle: true, padding: 16, color: '#f0f6fc' } },
+              tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${formatCurrency(c.parsed.y)}` } }
+            },
+            scales: {
+              y: { ticks: { callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v.toFixed(0)), color: '#8b949e' }, grid: { color: '#1c233380' } },
+              x: { ticks: { maxTicksLimit: 10, font: { size: 10 }, color: '#8b949e' }, grid: { display: false } }
+            }
+          }
+        });
+        return () => { if (chartLineRef.current) chartLineRef.current.destroy(); };
+      }, [accountData, prices]);
+
+      if (accounts.length < 2) {
+        return (
+          <div className="max-w-5xl mx-auto p-4 pb-24">
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="text-6xl mb-4">📊</div>
+              <h2 className="text-2xl font-black mb-2">Compare Portfolios</h2>
+              <p className="text-rh-muted">Add at least 2 accounts to compare performance.</p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="max-w-5xl mx-auto p-4 pb-24">
+          <h2 className="text-2xl font-black mb-6">📊 Compare Portfolios</h2>
+
+          {/* Summary cards */}
+          <div className={`grid gap-3 mb-6 ${accountData.length <= 2 ? 'grid-cols-2' : accountData.length === 3 ? 'grid-cols-3' : 'grid-cols-2 sm:grid-cols-4'}`}>
+            {accountData.map(acct => (
+              <div key={acct.id} className="bg-rh-card border-2 rounded-xl p-4" style={{ borderColor: acct.color }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">{acct.emoji}</span>
+                  <span className="font-bold text-sm truncate">{acct.name}</span>
+                </div>
+                <p className="text-xl font-black" style={{ color: acct.color }}>{formatCurrency(acct.totalValue)}</p>
+                <p className={`text-sm font-bold ${acct.gain >= 0 ? 'text-rh-green' : 'text-rh-red'}`}>
+                  {formatPercent(acct.pct)}
+                </p>
+                <p className="text-xs text-rh-dim mt-1">{acct.holdings} holdings</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Performance comparison bar chart */}
+          <div className="bg-rh-card border border-rh-border rounded-xl p-4 mb-6">
+            <h3 className="font-bold text-sm text-rh-muted mb-3">📈 Total Return %</h3>
+            <div className="chart-container" style={{ height: '250px' }}><canvas ref={canvasBarRef} /></div>
+          </div>
+
+          {/* Growth over time */}
+          <div className="bg-rh-card border border-rh-border rounded-xl p-4 mb-6">
+            <h3 className="font-bold text-sm text-rh-muted mb-3">📈 Portfolio Growth Over Time</h3>
+            <div className="chart-container" style={{ height: '300px' }}><canvas ref={canvasLineRef} /></div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Main App ──────────────────────────────────────────────────────
+    function App() {
+      const [view, setView] = useState('kids');
+      const [accountsData, setAccountsData] = useState(null);
+      const [activeAccountId, setActiveAccountId] = useState(null);
+      const [lots, setLots] = useState([]);
+      const [prices, setPrices] = useState(loadPrices);
+      const [loading, setLoading] = useState(true);
+      const [lastUpdated, setLastUpdated] = useState(null);
+      const [initPhase, setInitPhase] = useState(null);
+      const [initProgress, setInitProgress] = useState(0);
+      const [initTotal, setInitTotal] = useState(0);
+      const [showNewAccount, setShowNewAccount] = useState(false);
+
+      // Initialize on mount
+      useEffect(() => {
+        const init = async () => {
+          // Migrate or load accounts
+          const acctData = migrateToMultiAccount();
+          setAccountsData(acctData);
+          const activeId = acctData.activeAccountId;
+          setActiveAccountId(activeId);
+
+          // Load active account's portfolio
+          const portfolio = initializePortfolio(activeId);
+          setLots(portfolio);
+
+          // Gather all tickers across all accounts for price fetching
+          const allTickers = new Set();
+          acctData.accounts.forEach(acct => {
+            loadPortfolio(acct.id).forEach(l => allTickers.add(l.ticker));
+          });
+          const tickerList = [...allTickers];
+
+          const cached = loadPrices();
+          const hasCachedPrices = Object.keys(cached).length > 10;
+
+          if (hasCachedPrices) {
+            setPrices(cached);
+            setInitPhase(null);
+            setLoading(false);
+            setLastUpdated('cached');
+            fetchPricesBatch(tickerList, () => {}).then(p => {
+              if (Object.keys(p).length > Object.keys(cached).length) {
+                setPrices(p);
+                setLastUpdated(new Date().toLocaleTimeString());
+              }
+            });
+          } else {
+            setInitPhase('current');
+            setInitProgress(0);
+            setInitTotal(tickerList.length);
+            const fetchPromise = fetchPricesBatch(tickerList, (p, t) => { setInitProgress(p); setInitTotal(t); });
+            const timeoutPromise = new Promise(r => setTimeout(() => r(null), 20000));
+            const result = await Promise.race([fetchPromise, timeoutPromise]);
+            if (result && Object.keys(result).length > 0) {
+              setPrices(result);
+              setLastUpdated(new Date().toLocaleTimeString());
+            }
+            setInitPhase(null);
+            setLoading(false);
+          }
+        };
+        init();
+      }, []);
+
+      // Save lots whenever they change (to active account)
+      useEffect(() => {
+        if (lots.length > 0 && activeAccountId) savePortfolio(lots, activeAccountId);
+      }, [lots, activeAccountId]);
+
+      // Aggregate stocks
+      const stocks = useMemo(() => {
+        const map = {};
+        lots.forEach(l => {
+          if (!map[l.ticker]) map[l.ticker] = { ticker: l.ticker, companyName: l.companyName, totalShares: 0, totalCost: 0, avgCost: 0 };
+          map[l.ticker].totalShares += l.shares;
+          map[l.ticker].totalCost += l.shares * l.purchasePrice;
+          if (l.companyName) map[l.ticker].companyName = l.companyName;
+        });
+        Object.values(map).forEach(s => { s.avgCost = s.totalShares > 0 ? s.totalCost / s.totalShares : 0; });
+        return Object.values(map);
+      }, [lots]);
+
+      const refreshPrices = useCallback(async () => {
+        // Gather tickers from ALL accounts
+        const allTickers = new Set();
+        if (accountsData) {
+          accountsData.accounts.forEach(acct => {
+            loadPortfolio(acct.id).forEach(l => allTickers.add(l.ticker));
+          });
+        }
+        const tickerList = [...allTickers];
+        if (!tickerList.length) return;
+        setLoading(true);
+        const newPrices = await fetchPricesBatch(tickerList, () => {});
+        setPrices(newPrices);
+        setLastUpdated(new Date().toLocaleTimeString());
+        setLoading(false);
+      }, [accountsData]);
+
+      const switchAccount = useCallback((newId) => {
+        if (newId === activeAccountId) return;
+        // Save current lots before switching
+        if (activeAccountId && lots.length > 0) savePortfolio(lots, activeAccountId);
+        setActiveAccountId(newId);
+        setLots(loadPortfolio(newId));
+        // Update active in storage
+        const acctData = loadAccounts();
+        if (acctData) { acctData.activeAccountId = newId; saveAccounts(acctData); setAccountsData(acctData); }
+      }, [activeAccountId, lots]);
+
+      const handleAddAccount = useCallback((formData) => {
+        const acctData = loadAccounts();
+        const newId = generateAccountId();
+        const newAcct = { id: newId, name: formData.name, type: formData.type, emoji: formData.emoji, color: formData.color };
+        acctData.accounts.push(newAcct);
+        if (formData.initSP500) initializePortfolio(newId);
+        else { savePortfolio([], newId); localStorage.setItem(`stockTrackerInitialized_${newId}`, 'true'); }
+        saveAccounts(acctData);
+        setAccountsData(acctData);
+        setShowNewAccount(false);
+        switchAccount(newId);
+      }, [switchAccount]);
+
+      const activeAccount = accountsData?.accounts.find(a => a.id === activeAccountId);
+
+      if (initPhase) {
+        return <InitScreen progress={initProgress} total={initTotal} phase={initPhase} />;
+      }
+
+      if (!accountsData) return null;
+
+      return (
+        <div className="min-h-screen">
+          {/* Nav */}
+          <nav className="bg-rh-card/90 backdrop-blur-lg border-b border-rh-border sticky top-0 z-40">
+            <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <AccountSwitcher accounts={accountsData.accounts} activeAccountId={activeAccountId} onSwitch={switchAccount} onAdd={() => setShowNewAccount(true)} />
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex bg-rh-surface rounded-lg p-0.5 border border-rh-border">
+                  <button onClick={() => { setView('kids'); setShowNewAccount(false); }} className={`px-2.5 py-1.5 rounded-md text-xs font-bold transition ${view === 'kids' ? 'bg-rh-green text-black' : 'text-rh-muted'}`}>
+                    📊 Portfolio
+                  </button>
+                  <button onClick={() => { setView('compare'); setShowNewAccount(false); }} className={`px-2.5 py-1.5 rounded-md text-xs font-bold transition ${view === 'compare' ? 'bg-rh-green text-black' : 'text-rh-muted'}`}>
+                    📈 Compare
+                  </button>
+                  <button onClick={() => { setView('manage'); setShowNewAccount(false); }} className={`px-2.5 py-1.5 rounded-md text-xs font-bold transition ${view === 'manage' ? 'bg-rh-green text-black' : 'text-rh-muted'}`}>
+                    ⚙️ Manage
+                  </button>
+                </div>
+                <button onClick={refreshPrices} disabled={loading} className="p-2 rounded-lg hover:bg-rh-surface transition text-sm border border-rh-border" title="Refresh">
+                  <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span>
+                </button>
+              </div>
+            </div>
+            {activeAccount && (
+              <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center justify-between">
+                <p className="text-sm font-bold" style={{ color: activeAccount.color }}>
+                  {activeAccount.emoji} {activeAccount.name}'s Portfolio
+                </p>
+                {lastUpdated && <p className="text-xs text-rh-dim">Updated {lastUpdated} <span className="text-rh-green">●</span></p>}
+              </div>
+            )}
+          </nav>
+
+          {/* New account form overlay */}
+          {showNewAccount && (
+            <div className="max-w-md mx-auto p-4 mt-4">
+              <AccountForm account={null} onSave={handleAddAccount} onCancel={() => setShowNewAccount(false)} usedColors={accountsData.accounts.map(a => a.color)} />
+            </div>
+          )}
+
+          {!showNewAccount && view === 'kids' && (
+            <KidsDashboard lots={lots} stocks={stocks} prices={prices} loading={loading} onGoToManage={() => setView('manage')} />
+          )}
+          {!showNewAccount && view === 'compare' && (
+            <CompareView accounts={accountsData.accounts} prices={prices} />
+          )}
+          {!showNewAccount && view === 'manage' && (
+            <ManageView lots={lots} setLots={setLots} prices={prices} accounts={accountsData.accounts} activeAccountId={activeAccountId} onAccountsUpdate={setAccountsData} onSwitchAccount={switchAccount} />
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
