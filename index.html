@@ -403,12 +403,23 @@
             if (data.spark?.result) {
               for (const item of data.spark.result) {
                 const sym = item.symbol;
-                const closes = item.response?.[0]?.indicators?.quote?.[0]?.close?.filter(c => c != null) || [];
+                const rawCloses = item.response?.[0]?.indicators?.quote?.[0]?.close || [];
+                const rawTimestamps = item.response?.[0]?.timestamp || [];
+                // Filter out nulls while keeping timestamps aligned
+                const closes = [];
+                const timestamps = [];
+                for (let k = 0; k < rawCloses.length; k++) {
+                  if (rawCloses[k] != null) {
+                    closes.push(rawCloses[k]);
+                    timestamps.push(rawTimestamps[k] ? rawTimestamps[k] * 1000 : Date.now());
+                  }
+                }
                 if (closes.length > 0) {
                   results[sym] = {
                     price: closes[closes.length - 1],
                     previousClose: closes.length > 1 ? closes[closes.length - 2] : closes[0],
                     sparkline: closes,
+                    sparklineTimestamps: timestamps,
                     lastUpdated: new Date().toISOString(),
                   };
                 }
@@ -595,36 +606,154 @@
       return <div className="chart-container" style={{height:'300px'}}><canvas ref={canvasRef}/></div>;
     }
 
+    const CHART_HORIZONS = [
+      { key: '1W', range: '5d', interval: '1d', label: '1W' },
+      { key: '1M', range: '1mo', interval: '1d', label: '1M' },
+      { key: '3M', range: '3mo', interval: '1d', label: '3M' },
+      { key: '6M', range: '6mo', interval: '1wk', label: '6M' },
+      { key: '1Y', range: '1y', interval: '1wk', label: '1Y' },
+      { key: 'ALL', range: 'max', interval: '1mo', label: 'ALL' },
+    ];
+
     function LineChartComponent({ lots, prices }) {
       const canvasRef = useRef(null);
       const chartRef = useRef(null);
+      const [horizon, setHorizon] = useState('1M');
+      const [rangeData, setRangeData] = useState({}); // { '1M': { AAPL: {closes,timestamps}, ... }, ... }
+      const [loading, setLoading] = useState(false);
 
+      // Get unique tickers that have positions
+      const activeTickers = useMemo(() => {
+        const set = new Set();
+        lots.forEach(l => { if (l.purchasePrice > 0) set.add(l.ticker); });
+        return [...set];
+      }, [lots]);
+
+      // For 1M, use already-loaded sparkline data from prices (no extra fetch)
+      const defaultData = useMemo(() => {
+        const result = {};
+        activeTickers.forEach(ticker => {
+          const p = prices[ticker];
+          if (p?.sparkline?.length > 0 && p?.sparklineTimestamps?.length > 0) {
+            result[ticker] = { closes: p.sparkline, timestamps: p.sparklineTimestamps };
+          }
+        });
+        return result;
+      }, [activeTickers, prices]);
+
+      // Fetch data when horizon changes (1M uses cached sparkline data)
+      useEffect(() => {
+        if (horizon === '1M') return; // Use defaultData
+        if (rangeData[horizon]) return; // Already fetched
+        if (activeTickers.length === 0) return;
+
+        const h = CHART_HORIZONS.find(h => h.key === horizon);
+        if (!h) return;
+
+        setLoading(true);
+        fetchSparkRange(activeTickers, h.range, h.interval).then(raw => {
+          // Convert fetchSparkRange format (timestamps in seconds) to ms format
+          const data = {};
+          Object.entries(raw).forEach(([ticker, d]) => {
+            const closes = [], timestamps = [];
+            for (let k = 0; k < d.closes.length; k++) {
+              if (d.closes[k] != null) {
+                closes.push(d.closes[k]);
+                timestamps.push((d.timestamps[k] || 0) * 1000);
+              }
+            }
+            if (closes.length > 0) data[ticker] = { closes, timestamps };
+          });
+          setRangeData(prev => ({ ...prev, [horizon]: data }));
+          setLoading(false);
+        }).catch(() => setLoading(false));
+      }, [horizon, activeTickers]);
+
+      // Build chart whenever horizon/data changes
       useEffect(() => {
         if (!canvasRef.current || lots.length === 0) return;
-        const sortedLots = [...lots].filter(l => l.purchasePrice > 0).sort((a, b) => new Date(a.date) - new Date(b.date));
-        if (sortedLots.length === 0) return;
-        const startDate = new Date(sortedLots[0].date);
-        const today = new Date();
-        const numPoints = 60;
-        const labels = [];
-        const investedData = [];
-        const valueData = [];
+        const activeLots = lots.filter(l => l.purchasePrice > 0);
+        if (activeLots.length === 0) return;
 
-        for (let i = 0; i <= numPoints; i++) {
-          const date = new Date(startDate.getTime() + (i / numPoints) * (today - startDate));
-          labels.push(date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
-          let totalInvested = 0, totalValue = 0;
-          sortedLots.forEach(lot => {
-            if (new Date(lot.date) <= date) {
+        // Get the right data source
+        const tickerData = horizon === '1M' ? defaultData : (rangeData[horizon] || {});
+        if (Object.keys(tickerData).length === 0) return;
+
+        // Find the common set of timestamps (use the longest sparkline's timestamps)
+        let refTimestamps = [];
+        let maxLen = 0;
+        for (const ticker of Object.keys(tickerData)) {
+          const td = tickerData[ticker];
+          if (td.timestamps.length > maxLen) {
+            maxLen = td.timestamps.length;
+            refTimestamps = td.timestamps;
+          }
+        }
+        if (refTimestamps.length === 0) return;
+
+        // For each timestamp, compute portfolio value and cost basis
+        const labels = [];
+        const valueData = [];
+        const investedData = [];
+
+        // Determine date format based on horizon
+        const dateFmt = horizon === '1W' || horizon === '1M'
+          ? { month: 'short', day: 'numeric' }
+          : horizon === '3M' || horizon === '6M'
+          ? { month: 'short', day: 'numeric' }
+          : { month: 'short', year: '2-digit' };
+
+        for (let i = 0; i < refTimestamps.length; i++) {
+          const ts = refTimestamps[i];
+          const date = new Date(ts);
+          labels.push(date.toLocaleDateString('en-US', dateFmt));
+
+          let totalValue = 0;
+          let totalInvested = 0;
+
+          activeLots.forEach(lot => {
+            const lotDate = new Date(lot.date).getTime();
+            // Only count lot if it was purchased before this date
+            if (lotDate <= ts + 86400000) { // +1 day tolerance
               totalInvested += lot.shares * lot.purchasePrice;
-              const currentPrice = prices[lot.ticker]?.price || lot.purchasePrice;
-              const progress = Math.min(1, (date - new Date(lot.date)) / (today - new Date(lot.date)));
-              totalValue += lot.shares * (lot.purchasePrice + (currentPrice - lot.purchasePrice) * progress);
+
+              const td = tickerData[lot.ticker];
+              if (td && td.closes.length > 0) {
+                // Find the price at this index (align from the right if different lengths)
+                const offset = refTimestamps.length - td.closes.length;
+                const idx = i - offset;
+                if (idx >= 0 && idx < td.closes.length) {
+                  totalValue += lot.shares * td.closes[idx];
+                } else if (idx < 0) {
+                  // Before this ticker's data starts, use earliest available price
+                  totalValue += lot.shares * td.closes[0];
+                } else {
+                  totalValue += lot.shares * td.closes[td.closes.length - 1];
+                }
+              } else {
+                // No sparkline data for this ticker, use purchase price
+                totalValue += lot.shares * (prices[lot.ticker]?.price || lot.purchasePrice);
+              }
             }
           });
+
           investedData.push(totalInvested);
           valueData.push(totalValue);
         }
+
+        // Smart Y-axis formatting
+        const allVals = [...valueData, ...investedData].filter(v => v > 0);
+        const minVal = Math.min(...allVals);
+        const maxVal = Math.max(...allVals);
+        const range = maxVal - minVal;
+
+        const formatY = (v) => {
+          if (range < 100) return '$' + v.toFixed(2);
+          if (range < 1000) return '$' + v.toFixed(0);
+          if (v >= 1000000) return '$' + (v / 1000000).toFixed(1) + 'M';
+          if (v >= 10000) return '$' + (v / 1000).toFixed(1) + 'k';
+          return '$' + v.toLocaleString('en-US', { maximumFractionDigits: 0 });
+        };
 
         if (chartRef.current) chartRef.current.destroy();
         chartRef.current = new Chart(canvasRef.current, {
@@ -632,8 +761,8 @@
           data: {
             labels,
             datasets: [
-              { label: "Current Value", data: valueData, borderColor: '#00c805', backgroundColor: 'rgba(0,200,5,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 },
-              { label: "Cost Basis", data: investedData, borderColor: '#4a5568', backgroundColor: 'rgba(74,85,104,0.05)', fill: true, tension: 0.1, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 3] }
+              { label: "Portfolio Value", data: valueData, borderColor: '#00c805', backgroundColor: 'rgba(0,200,5,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+              { label: "Cost Basis", data: investedData, borderColor: '#4a5568', backgroundColor: 'rgba(74,85,104,0.05)', fill: false, tension: 0.1, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 3] }
             ]
           },
           options: {
@@ -644,15 +773,40 @@
               tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${formatCurrency(c.parsed.y)}` } }
             },
             scales: {
-              y: { ticks: { callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v.toFixed(0)) }, grid: { color: '#1c233380' } },
+              y: {
+                ticks: { callback: formatY },
+                grid: { color: '#1c233380' },
+                // Don't start at zero — show actual range
+                beginAtZero: false,
+              },
               x: { ticks: { maxTicksLimit: 10, font: { size: 10 } }, grid: { display: false } }
             }
           }
         });
         return () => { if (chartRef.current) chartRef.current.destroy(); };
-      }, [lots, prices]);
+      }, [lots, prices, horizon, defaultData, rangeData]);
 
-      return <div className="chart-container" style={{height:'280px'}}><canvas ref={canvasRef}/></div>;
+      return (
+        <div>
+          <div className="flex gap-1 mb-3 flex-wrap">
+            {CHART_HORIZONS.map(h => (
+              <button
+                key={h.key}
+                onClick={() => setHorizon(h.key)}
+                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                  horizon === h.key
+                    ? 'bg-green-500 text-white'
+                    : 'bg-rh-hover text-rh-muted hover:text-rh-text'
+                }`}
+              >
+                {h.label}
+              </button>
+            ))}
+          </div>
+          {loading && <div className="text-xs text-rh-muted mb-2 animate-pulse">⏳ Loading {horizon} data...</div>}
+          <div className="chart-container" style={{height:'280px'}}><canvas ref={canvasRef}/></div>
+        </div>
+      );
     }
 
     function SparklineChart({ data, color, width = 100, height = 32 }) {
@@ -1553,13 +1707,19 @@
       // Build sparkline-based growth data from already-loaded prices (no API calls needed)
       const sparklineGrowth = useMemo(() => {
         if (Object.keys(prices).length === 0) return null;
-        // Find the max sparkline length across all tickers
+        // Find the max sparkline length and reference timestamps
         let maxLen = 0;
+        let refTimestamps = null;
         Object.values(prices).forEach(p => {
-          if (p.sparkline && p.sparkline.length > maxLen) maxLen = p.sparkline.length;
+          if (p.sparkline && p.sparkline.length > maxLen) {
+            maxLen = p.sparkline.length;
+            if (p.sparklineTimestamps && p.sparklineTimestamps.length === p.sparkline.length) {
+              refTimestamps = p.sparklineTimestamps;
+            }
+          }
         });
         if (maxLen < 2) return null;
-        return { maxLen };
+        return { maxLen, refTimestamps };
       }, [prices]);
 
       // Fetch historical data for non-1M horizons
@@ -1636,13 +1796,20 @@
           if (!sparklineGrowth) return;
           const numPoints = sparklineGrowth.maxLen;
 
-          // Generate date labels for the past month of trading days
-          const today = new Date();
+          // Use real timestamps if available, otherwise approximate
           const labelsArr = [];
-          for (let i = numPoints - 1; i >= 0; i--) {
-            const d = new Date(today);
-            d.setDate(d.getDate() - Math.round(i * 30 / numPoints));
-            labelsArr.push(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+          if (sparklineGrowth.refTimestamps && sparklineGrowth.refTimestamps.length === numPoints) {
+            for (let i = 0; i < numPoints; i++) {
+              const d = new Date(sparklineGrowth.refTimestamps[i]);
+              labelsArr.push(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            }
+          } else {
+            const today = new Date();
+            for (let i = numPoints - 1; i >= 0; i--) {
+              const d = new Date(today);
+              d.setDate(d.getDate() - Math.round(i * 30 / numPoints));
+              labelsArr.push(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            }
           }
           labels = labelsArr;
 
@@ -1743,7 +1910,19 @@
               tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${formatCurrency(c.parsed.y)}` } }
             },
             scales: {
-              y: { ticks: { callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v.toFixed(0)), color: '#8b949e' }, grid: { color: '#1c233380' } },
+              y: {
+                beginAtZero: false,
+                ticks: {
+                  callback: v => {
+                    if (v >= 1000000) return '$' + (v/1000000).toFixed(1) + 'M';
+                    if (v >= 10000) return '$' + (v/1000).toFixed(1) + 'k';
+                    if (v >= 1000) return '$' + (v/1000).toFixed(2) + 'k';
+                    return '$' + v.toFixed(0);
+                  },
+                  color: '#8b949e'
+                },
+                grid: { color: '#1c233380' }
+              },
               x: { ticks: { maxTicksLimit: 12, font: { size: 10 }, color: '#8b949e' }, grid: { display: false } }
             }
           }
