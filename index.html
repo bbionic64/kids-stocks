@@ -1209,7 +1209,43 @@
       const [suggestions, setSuggestions] = useState([]);
       const [showSuggestions, setShowSuggestions] = useState(false);
       const [activeField, setActiveField] = useState(null); // 'ticker' or 'company'
+      const [lastClose, setLastClose] = useState(null); // { price, date }
+      const [fetchingPrice, setFetchingPrice] = useState(false);
       const suggestionsRef = useRef(null);
+
+      // Fetch last closing price for a ticker
+      const fetchLastClose = async (ticker) => {
+        if (!ticker) { setLastClose(null); return; }
+        setFetchingPrice(true);
+        try {
+          const urls = [
+            `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/spark?symbols=${ticker}&range=5d&interval=1d`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/spark?symbols=${ticker}&range=5d&interval=1d`)}`,
+          ];
+          for (const url of urls) {
+            try {
+              const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+              if (!resp.ok) continue;
+              const data = await resp.json();
+              const item = data.spark?.result?.[0];
+              if (item) {
+                const closes = item.response?.[0]?.indicators?.quote?.[0]?.close?.filter(c => c != null) || [];
+                const timestamps = item.response?.[0]?.timestamp || [];
+                if (closes.length > 0) {
+                  const lastPrice = closes[closes.length - 1];
+                  const lastTs = timestamps[timestamps.length - 1];
+                  const closeDate = lastTs ? new Date(lastTs * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+                  setLastClose({ price: lastPrice, date: closeDate });
+                  setFetchingPrice(false);
+                  return;
+                }
+              }
+            } catch (e) { continue; }
+          }
+          setLastClose(null);
+        } catch (e) { setLastClose(null); }
+        setFetchingPrice(false);
+      };
 
       const searchStocks = (query, field) => {
         if (!query || query.length < 1) { setSuggestions([]); setShowSuggestions(false); return; }
@@ -1226,6 +1262,7 @@
         setForm(f => ({ ...f, ticker, companyName: name }));
         setSuggestions([]);
         setShowSuggestions(false);
+        fetchLastClose(ticker);
       };
 
       const handleTickerChange = (e) => {
@@ -1244,11 +1281,16 @@
         setTimeout(() => { if (activeField === 'ticker') setShowSuggestions(false); }, 200);
         if (form.ticker && !form.companyName) {
           const match = SP500_DATA.find(([t]) => t.toLowerCase() === form.ticker.toLowerCase());
-          if (match) { setForm(f => ({ ...f, ticker: match[0], companyName: match[1] })); return; }
+          if (match) {
+            setForm(f => ({ ...f, ticker: match[0], companyName: match[1] }));
+            fetchLastClose(match[0]);
+            return;
+          }
           setFetching(true);
           const name = await fetchCompanyName(form.ticker.toUpperCase());
           if (name) setForm(f => ({ ...f, companyName: name }));
           setFetching(false);
+          fetchLastClose(form.ticker.toUpperCase());
         }
       };
 
@@ -1303,6 +1345,28 @@
                 placeholder="Search company name..." className="w-full px-3 py-2.5 rounded-lg" autoComplete="off" />
               {activeField === 'company' && <SuggestionDropdown />}
             </div>
+          </div>
+
+          {/* Last closing price indicator */}
+          {(lastClose || fetchingPrice) && form.ticker && (
+            <div className="mb-4 px-4 py-3 bg-rh-surface/60 border border-rh-border/50 rounded-lg flex items-center gap-3">
+              {fetchingPrice ? (
+                <span className="text-sm text-rh-muted animate-pulse">⏳ Fetching last close for {form.ticker.toUpperCase()}...</span>
+              ) : lastClose && (
+                <>
+                  <span className="text-xs font-bold text-rh-dim uppercase">Last Close</span>
+                  <span className="text-lg font-black text-rh-green">${lastClose.price.toFixed(2)}</span>
+                  {lastClose.date && <span className="text-xs text-rh-dim">({lastClose.date})</span>}
+                  <button type="button" onClick={() => setForm(f => ({ ...f, purchasePrice: lastClose.price.toFixed(2) }))}
+                    className="ml-auto px-3 py-1 bg-rh-green/20 text-rh-green text-xs font-bold rounded-lg hover:bg-rh-green/30 transition">
+                    Use as Price
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Shares *</label>
               <input type="number" step="any" min="0.001" value={form.shares} onChange={e => setForm({...form, shares: e.target.value})} placeholder="10" className="w-full px-3 py-2.5 rounded-lg font-bold" />
