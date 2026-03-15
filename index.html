@@ -467,6 +467,43 @@
       return results;
     }
 
+    // Fetch historical spark data for a given range (for compare chart)
+    async function fetchSparkRange(tickers, range, interval) {
+      const results = {};
+      const batchSize = 25;
+      for (let i = 0; i < tickers.length; i += batchSize) {
+        const batch = tickers.slice(i, i + batchSize);
+        const symbols = batch.join(',');
+        const urls = [
+          `https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols}&range=${range}&interval=${interval}`,
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols}&range=${range}&interval=${interval}`)}`,
+        ];
+        for (const url of urls) {
+          try {
+            const resp = await fetch(url, { signal: AbortSignal.timeout(12000) });
+            if (!resp.ok) continue;
+            const data = await resp.json();
+            if (data.spark?.result) {
+              for (const item of data.spark.result) {
+                const sym = item.symbol;
+                const r = item.response?.[0];
+                const timestamps = r?.timestamp || [];
+                const closes = r?.indicators?.quote?.[0]?.close || [];
+                if (timestamps.length > 0) {
+                  results[sym] = { timestamps, closes };
+                }
+              }
+              break;
+            }
+          } catch (e) { continue; }
+        }
+        if (i + batchSize < tickers.length) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+      return results;
+    }
+
     // Fetch company name
     async function fetchCompanyName(ticker) {
       try {
@@ -1479,11 +1516,23 @@
     }
 
     // ─── Compare View ───────────────────────────────────────────────────
+    const TIME_HORIZONS = [
+      { label: '1W', range: '5d', interval: '1d' },
+      { label: '1M', range: '1mo', interval: '1d' },
+      { label: '3M', range: '3mo', interval: '1d' },
+      { label: '6M', range: '6mo', interval: '1d' },
+      { label: '1Y', range: '1y', interval: '1d' },
+      { label: 'ALL', range: 'max', interval: '1wk' },
+    ];
+
     function CompareView({ accounts, prices }) {
       const canvasBarRef = useRef(null);
       const canvasLineRef = useRef(null);
       const chartBarRef = useRef(null);
       const chartLineRef = useRef(null);
+      const [selectedHorizon, setSelectedHorizon] = useState('1M');
+      const [historicalData, setHistoricalData] = useState(null);
+      const [loadingHistory, setLoadingHistory] = useState(false);
 
       const accountData = useMemo(() => accounts.map(acct => {
         const lots = loadPortfolio(acct.id);
@@ -1499,6 +1548,26 @@
         const pct = totalCost > 0 ? (gain / totalCost) * 100 : 0;
         return { ...acct, lots, totalCost, totalValue, gain, pct, holdings };
       }), [accounts, prices]);
+
+      // Gather all unique tickers across accounts
+      const allTickers = useMemo(() => {
+        const set = new Set();
+        accountData.forEach(a => a.lots.forEach(l => { if (l.purchasePrice > 0) set.add(l.ticker); }));
+        return [...set];
+      }, [accountData]);
+
+      // Fetch historical data when horizon changes
+      useEffect(() => {
+        if (allTickers.length === 0 || accounts.length < 2) return;
+        const horizon = TIME_HORIZONS.find(h => h.label === selectedHorizon);
+        if (!horizon) return;
+        let cancelled = false;
+        setLoadingHistory(true);
+        fetchSparkRange(allTickers, horizon.range, horizon.interval).then(data => {
+          if (!cancelled) { setHistoricalData(data); setLoadingHistory(false); }
+        }).catch(() => { if (!cancelled) setLoadingHistory(false); });
+        return () => { cancelled = true; };
+      }, [selectedHorizon, allTickers.join(','), accounts.length]);
 
       // Performance bar chart
       useEffect(() => {
@@ -1528,43 +1597,73 @@
         return () => { if (chartBarRef.current) chartBarRef.current.destroy(); };
       }, [accountData]);
 
-      // Growth line chart
+      // Growth line chart from real historical data
       useEffect(() => {
-        if (!canvasLineRef.current || accountData.length === 0) return;
+        if (!canvasLineRef.current || accountData.length === 0 || !historicalData) return;
         if (chartLineRef.current) chartLineRef.current.destroy();
-        const numPoints = 60;
-        const today = new Date();
-        let earliestDate = today;
-        accountData.forEach(a => a.lots.forEach(l => { const d = new Date(l.date); if (d < earliestDate) earliestDate = d; }));
-        const labels = [];
-        for (let i = 0; i <= numPoints; i++) {
-          const date = new Date(earliestDate.getTime() + (i / numPoints) * (today - earliestDate));
-          labels.push(date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
+
+        // Build unified timestamp axis from all tickers
+        const tsSet = new Set();
+        Object.values(historicalData).forEach(d => d.timestamps.forEach(t => tsSet.add(t)));
+        const allTimestamps = [...tsSet].sort((a, b) => a - b);
+
+        if (allTimestamps.length === 0) return;
+
+        // For each ticker, build a map of timestamp -> close price
+        const tickerPriceMap = {};
+        Object.entries(historicalData).forEach(([ticker, d]) => {
+          const map = {};
+          d.timestamps.forEach((t, i) => {
+            if (d.closes[i] != null) map[t] = d.closes[i];
+          });
+          tickerPriceMap[ticker] = map;
+        });
+
+        // Helper: get price for ticker at timestamp (use nearest prior)
+        function getPriceAt(ticker, ts) {
+          const map = tickerPriceMap[ticker];
+          if (!map) return null;
+          if (map[ts] != null) return map[ts];
+          // Find nearest prior timestamp
+          const hd = historicalData[ticker];
+          let best = null;
+          for (let i = hd.timestamps.length - 1; i >= 0; i--) {
+            if (hd.timestamps[i] <= ts && hd.closes[i] != null) { best = hd.closes[i]; break; }
+          }
+          return best;
         }
+
+        const labels = allTimestamps.map(t => {
+          const d = new Date(t * 1000);
+          return selectedHorizon === '1W' || selectedHorizon === '1M'
+            ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        });
+
         const datasets = accountData.map(acct => {
-          const values = [];
-          for (let i = 0; i <= numPoints; i++) {
-            const date = new Date(earliestDate.getTime() + (i / numPoints) * (today - earliestDate));
+          const values = allTimestamps.map(ts => {
             let total = 0;
             acct.lots.forEach(lot => {
-              if (lot.purchasePrice <= 0 || new Date(lot.date) > date) return;
-              const currentPrice = prices[lot.ticker]?.price || lot.purchasePrice;
-              const progress = Math.min(1, (date - new Date(lot.date)) / (today - new Date(lot.date)));
-              total += lot.shares * (lot.purchasePrice + (currentPrice - lot.purchasePrice) * progress);
+              if (lot.purchasePrice <= 0) return;
+              const lotDate = new Date(lot.date).getTime() / 1000;
+              if (lotDate > ts) return; // Lot not yet purchased at this timestamp
+              const price = getPriceAt(lot.ticker, ts);
+              total += lot.shares * (price != null ? price : lot.purchasePrice);
             });
-            values.push(total);
-          }
+            return total;
+          });
           return {
             label: acct.emoji + ' ' + acct.name,
             data: values,
             borderColor: acct.color,
             backgroundColor: acct.color + '15',
             fill: false,
-            tension: 0.4,
+            tension: 0.3,
             pointRadius: 0,
             borderWidth: 2.5,
           };
         });
+
         chartLineRef.current = new Chart(canvasLineRef.current, {
           type: 'line',
           data: { labels, datasets },
@@ -1577,12 +1676,12 @@
             },
             scales: {
               y: { ticks: { callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v.toFixed(0)), color: '#8b949e' }, grid: { color: '#1c233380' } },
-              x: { ticks: { maxTicksLimit: 10, font: { size: 10 }, color: '#8b949e' }, grid: { display: false } }
+              x: { ticks: { maxTicksLimit: 12, font: { size: 10 }, color: '#8b949e' }, grid: { display: false } }
             }
           }
         });
         return () => { if (chartLineRef.current) chartLineRef.current.destroy(); };
-      }, [accountData, prices]);
+      }, [accountData, historicalData, selectedHorizon]);
 
       if (accounts.length < 2) {
         return (
@@ -1623,10 +1722,34 @@
             <div className="chart-container" style={{ height: '250px' }}><canvas ref={canvasBarRef} /></div>
           </div>
 
-          {/* Growth over time */}
+          {/* Growth over time with time horizon selector */}
           <div className="bg-rh-card border border-rh-border rounded-xl p-4 mb-6">
-            <h3 className="font-bold text-sm text-rh-muted mb-3">📈 Portfolio Growth Over Time</h3>
-            <div className="chart-container" style={{ height: '300px' }}><canvas ref={canvasLineRef} /></div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-sm text-rh-muted">📈 Portfolio Growth Over Time</h3>
+              <div className="flex gap-1">
+                {TIME_HORIZONS.map(h => (
+                  <button
+                    key={h.label}
+                    onClick={() => setSelectedHorizon(h.label)}
+                    className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                      selectedHorizon === h.label
+                        ? 'bg-rh-green text-black'
+                        : 'bg-rh-border text-rh-muted hover:text-white'
+                    }`}
+                  >
+                    {h.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {loadingHistory ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-2 border-rh-green border-t-transparent mr-3"></div>
+                <span className="text-rh-muted text-sm">Loading historical prices...</span>
+              </div>
+            ) : (
+              <div className="chart-container" style={{ height: '300px' }}><canvas ref={canvasLineRef} /></div>
+            )}
           </div>
         </div>
       );
