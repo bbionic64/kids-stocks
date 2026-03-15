@@ -1533,6 +1533,7 @@
       const [selectedHorizon, setSelectedHorizon] = useState('1M');
       const [historicalData, setHistoricalData] = useState(null);
       const [loadingHistory, setLoadingHistory] = useState(false);
+      const fetchCacheRef = useRef({});
 
       const accountData = useMemo(() => accounts.map(acct => {
         const lots = loadPortfolio(acct.id);
@@ -1549,25 +1550,51 @@
         return { ...acct, lots, totalCost, totalValue, gain, pct, holdings };
       }), [accounts, prices]);
 
-      // Gather all unique tickers across accounts
-      const allTickers = useMemo(() => {
-        const set = new Set();
-        accountData.forEach(a => a.lots.forEach(l => { if (l.purchasePrice > 0) set.add(l.ticker); }));
-        return [...set];
-      }, [accountData]);
+      // Build sparkline-based growth data from already-loaded prices (no API calls needed)
+      const sparklineGrowth = useMemo(() => {
+        if (Object.keys(prices).length === 0) return null;
+        // Find the max sparkline length across all tickers
+        let maxLen = 0;
+        Object.values(prices).forEach(p => {
+          if (p.sparkline && p.sparkline.length > maxLen) maxLen = p.sparkline.length;
+        });
+        if (maxLen < 2) return null;
+        return { maxLen };
+      }, [prices]);
 
-      // Fetch historical data when horizon changes
+      // Fetch historical data for non-1M horizons
       useEffect(() => {
-        if (allTickers.length === 0 || accounts.length < 2) return;
+        if (selectedHorizon === '1M') { setHistoricalData(null); setLoadingHistory(false); return; }
+        if (accounts.length < 2) return;
         const horizon = TIME_HORIZONS.find(h => h.label === selectedHorizon);
         if (!horizon) return;
+
+        // Check cache
+        if (fetchCacheRef.current[selectedHorizon]) {
+          setHistoricalData(fetchCacheRef.current[selectedHorizon]);
+          return;
+        }
+
+        // Gather unique tickers across all accounts
+        const tickerSet = new Set();
+        accounts.forEach(acct => {
+          loadPortfolio(acct.id).forEach(l => { if (l.purchasePrice > 0) tickerSet.add(l.ticker); });
+        });
+        const tickers = [...tickerSet];
+        if (tickers.length === 0) return;
+
         let cancelled = false;
         setLoadingHistory(true);
-        fetchSparkRange(allTickers, horizon.range, horizon.interval).then(data => {
-          if (!cancelled) { setHistoricalData(data); setLoadingHistory(false); }
+        setHistoricalData(null);
+        fetchSparkRange(tickers, horizon.range, horizon.interval).then(data => {
+          if (!cancelled) {
+            fetchCacheRef.current[selectedHorizon] = data;
+            setHistoricalData(data);
+            setLoadingHistory(false);
+          }
         }).catch(() => { if (!cancelled) setLoadingHistory(false); });
         return () => { cancelled = true; };
-      }, [selectedHorizon, allTickers.join(','), accounts.length]);
+      }, [selectedHorizon, accounts]);
 
       // Performance bar chart
       useEffect(() => {
@@ -1597,72 +1624,113 @@
         return () => { if (chartBarRef.current) chartBarRef.current.destroy(); };
       }, [accountData]);
 
-      // Growth line chart from real historical data
+      // Growth line chart
       useEffect(() => {
-        if (!canvasLineRef.current || accountData.length === 0 || !historicalData) return;
+        if (!canvasLineRef.current || accountData.length === 0) return;
         if (chartLineRef.current) chartLineRef.current.destroy();
 
-        // Build unified timestamp axis from all tickers
-        const tsSet = new Set();
-        Object.values(historicalData).forEach(d => d.timestamps.forEach(t => tsSet.add(t)));
-        const allTimestamps = [...tsSet].sort((a, b) => a - b);
+        let labels, datasets;
 
-        if (allTimestamps.length === 0) return;
+        if (selectedHorizon === '1M') {
+          // Use already-loaded sparkline data from prices — instant, no API calls
+          if (!sparklineGrowth) return;
+          const numPoints = sparklineGrowth.maxLen;
 
-        // For each ticker, build a map of timestamp -> close price
-        const tickerPriceMap = {};
-        Object.entries(historicalData).forEach(([ticker, d]) => {
-          const map = {};
-          d.timestamps.forEach((t, i) => {
-            if (d.closes[i] != null) map[t] = d.closes[i];
-          });
-          tickerPriceMap[ticker] = map;
-        });
-
-        // Helper: get price for ticker at timestamp (use nearest prior)
-        function getPriceAt(ticker, ts) {
-          const map = tickerPriceMap[ticker];
-          if (!map) return null;
-          if (map[ts] != null) return map[ts];
-          // Find nearest prior timestamp
-          const hd = historicalData[ticker];
-          let best = null;
-          for (let i = hd.timestamps.length - 1; i >= 0; i--) {
-            if (hd.timestamps[i] <= ts && hd.closes[i] != null) { best = hd.closes[i]; break; }
+          // Generate date labels for the past month of trading days
+          const today = new Date();
+          const labelsArr = [];
+          for (let i = numPoints - 1; i >= 0; i--) {
+            const d = new Date(today);
+            d.setDate(d.getDate() - Math.round(i * 30 / numPoints));
+            labelsArr.push(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
           }
-          return best;
-        }
+          labels = labelsArr;
 
-        const labels = allTimestamps.map(t => {
-          const d = new Date(t * 1000);
-          return selectedHorizon === '1W' || selectedHorizon === '1M'
-            ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-            : d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-        });
-
-        const datasets = accountData.map(acct => {
-          const values = allTimestamps.map(ts => {
-            let total = 0;
-            acct.lots.forEach(lot => {
-              if (lot.purchasePrice <= 0) return;
-              const lotDate = new Date(lot.date).getTime() / 1000;
-              if (lotDate > ts) return; // Lot not yet purchased at this timestamp
-              const price = getPriceAt(lot.ticker, ts);
-              total += lot.shares * (price != null ? price : lot.purchasePrice);
-            });
-            return total;
+          datasets = accountData.map(acct => {
+            const values = [];
+            for (let i = 0; i < numPoints; i++) {
+              let total = 0;
+              acct.lots.forEach(lot => {
+                if (lot.purchasePrice <= 0) return;
+                const spark = prices[lot.ticker]?.sparkline;
+                if (spark && spark.length > 0) {
+                  // Align sparklines from the right (most recent)
+                  const idx = i - (numPoints - spark.length);
+                  const price = idx >= 0 && idx < spark.length && spark[idx] != null
+                    ? spark[idx]
+                    : (idx < 0 ? spark[0] : spark[spark.length - 1]);
+                  total += lot.shares * price;
+                } else {
+                  total += lot.shares * (prices[lot.ticker]?.price || lot.purchasePrice);
+                }
+              });
+              values.push(total);
+            }
+            return {
+              label: acct.emoji + ' ' + acct.name,
+              data: values,
+              borderColor: acct.color,
+              backgroundColor: acct.color + '15',
+              fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2.5,
+            };
           });
-          return {
-            label: acct.emoji + ' ' + acct.name,
-            data: values,
-            borderColor: acct.color,
-            backgroundColor: acct.color + '15',
-            fill: false,
-            tension: 0.3,
-            pointRadius: 0,
-            borderWidth: 2.5,
-          };
-        });
+        } else {
+          // Use fetched historical data for other horizons
+          if (!historicalData || Object.keys(historicalData).length === 0) return;
+
+          const tsSet = new Set();
+          Object.values(historicalData).forEach(d => d.timestamps.forEach(t => tsSet.add(t)));
+          const allTimestamps = [...tsSet].sort((a, b) => a - b);
+          if (allTimestamps.length === 0) return;
+
+          // Build ticker -> timestamp -> price lookup
+          const tickerPriceMap = {};
+          Object.entries(historicalData).forEach(([ticker, d]) => {
+            const map = {};
+            d.timestamps.forEach((t, i) => { if (d.closes[i] != null) map[t] = d.closes[i]; });
+            tickerPriceMap[ticker] = map;
+          });
+
+          function getPriceAt(ticker, ts) {
+            const map = tickerPriceMap[ticker];
+            if (!map) return null;
+            if (map[ts] != null) return map[ts];
+            const hd = historicalData[ticker];
+            for (let i = hd.timestamps.length - 1; i >= 0; i--) {
+              if (hd.timestamps[i] <= ts && hd.closes[i] != null) return hd.closes[i];
+            }
+            return null;
+          }
+
+          const isShort = selectedHorizon === '1W';
+          labels = allTimestamps.map(t => {
+            const d = new Date(t * 1000);
+            return isShort
+              ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              : d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+          });
+
+          datasets = accountData.map(acct => {
+            const values = allTimestamps.map(ts => {
+              let total = 0;
+              acct.lots.forEach(lot => {
+                if (lot.purchasePrice <= 0) return;
+                const lotDate = new Date(lot.date).getTime() / 1000;
+                if (lotDate > ts) return;
+                const price = getPriceAt(lot.ticker, ts);
+                total += lot.shares * (price != null ? price : lot.purchasePrice);
+              });
+              return total;
+            });
+            return {
+              label: acct.emoji + ' ' + acct.name,
+              data: values,
+              borderColor: acct.color,
+              backgroundColor: acct.color + '15',
+              fill: false, tension: 0.3, pointRadius: 0, borderWidth: 2.5,
+            };
+          });
+        }
 
         chartLineRef.current = new Chart(canvasLineRef.current, {
           type: 'line',
@@ -1681,7 +1749,7 @@
           }
         });
         return () => { if (chartLineRef.current) chartLineRef.current.destroy(); };
-      }, [accountData, historicalData, selectedHorizon]);
+      }, [accountData, prices, sparklineGrowth, historicalData, selectedHorizon]);
 
       if (accounts.length < 2) {
         return (
