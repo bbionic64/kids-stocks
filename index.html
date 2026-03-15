@@ -1201,7 +1201,7 @@
     }
 
     // ─── Add/Edit Lot Form ─────────────────────────────────────────────
-    function LotForm({ lot, onSave, onCancel }) {
+    function LotForm({ lot, onSave, onCancel, prices: loadedPrices }) {
       const [form, setForm] = useState({
         ticker: lot?.ticker || '', companyName: lot?.companyName || '', shares: lot?.shares || '',
         purchasePrice: lot?.purchasePrice || '', date: lot?.date || new Date().toISOString().split('T')[0],
@@ -1215,9 +1215,21 @@
       const [fetchingPrice, setFetchingPrice] = useState(false);
       const suggestionsRef = useRef(null);
 
-      // Fetch last closing price for a ticker
+      // Get last closing price — use already-loaded prices first, then API fallback
       const fetchLastClose = async (ticker) => {
         if (!ticker) { setLastClose(null); return; }
+
+        // Check if we already have this ticker's price loaded
+        const existing = loadedPrices?.[ticker.toUpperCase()];
+        if (existing?.price) {
+          const dateStr = existing.lastUpdated
+            ? new Date(existing.lastUpdated).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+            : null;
+          setLastClose({ price: existing.price, date: dateStr, source: 'cached' });
+          return;
+        }
+
+        // Fallback: fetch from API for tickers not in the portfolio
         setFetchingPrice(true);
         try {
           const urls = [
@@ -1244,8 +1256,8 @@
               }
             } catch (e) { continue; }
           }
-          setLastClose(null);
-        } catch (e) { setLastClose(null); }
+          setLastClose({ error: true });
+        } catch (e) { setLastClose({ error: true }); }
         setFetchingPrice(false);
       };
 
@@ -1354,7 +1366,9 @@
             <div className="mb-4 px-4 py-3 bg-rh-surface/60 border border-rh-border/50 rounded-lg flex items-center gap-3">
               {fetchingPrice ? (
                 <span className="text-sm text-rh-muted animate-pulse">⏳ Fetching last close for {form.ticker.toUpperCase()}...</span>
-              ) : lastClose && (
+              ) : lastClose?.error ? (
+                <span className="text-sm text-rh-dim">⚠️ Could not fetch closing price for {form.ticker.toUpperCase()}</span>
+              ) : lastClose?.price ? (
                 <>
                   <span className="text-xs font-bold text-rh-dim uppercase">Last Close</span>
                   <span className="text-lg font-black text-rh-green">${lastClose.price.toFixed(2)}</span>
@@ -1364,7 +1378,7 @@
                     Use as Price
                   </button>
                 </>
-              )}
+              ) : null}
             </div>
           )}
 
@@ -1484,7 +1498,7 @@
           )}
 
           {(showForm || editingLot) && (
-            <div className="mb-6"><LotForm lot={editingLot} onSave={handleSave} onCancel={() => { setShowForm(false); setEditingLot(null); }} /></div>
+            <div className="mb-6"><LotForm lot={editingLot} prices={prices} onSave={handleSave} onCancel={() => { setShowForm(false); setEditingLot(null); }} /></div>
           )}
 
           <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search stocks..." className="w-full px-3 py-2.5 rounded-lg text-sm mb-4" />
