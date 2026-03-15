@@ -1015,14 +1015,54 @@
         notes: lot?.notes || '', dividend: lot?.dividend || '', goal: lot?.goal || '',
       });
       const [fetching, setFetching] = useState(false);
+      const [suggestions, setSuggestions] = useState([]);
+      const [showSuggestions, setShowSuggestions] = useState(false);
+      const [activeField, setActiveField] = useState(null); // 'ticker' or 'company'
+      const suggestionsRef = useRef(null);
+
+      const searchStocks = (query, field) => {
+        if (!query || query.length < 1) { setSuggestions([]); setShowSuggestions(false); return; }
+        const q = query.toLowerCase();
+        const matches = SP500_DATA.filter(([ticker, name]) =>
+          field === 'ticker' ? ticker.toLowerCase().includes(q) : name.toLowerCase().includes(q)
+        ).slice(0, 8);
+        setSuggestions(matches);
+        setShowSuggestions(matches.length > 0);
+        setActiveField(field);
+      };
+
+      const selectStock = (ticker, name) => {
+        setForm(f => ({ ...f, ticker, companyName: name }));
+        setSuggestions([]);
+        setShowSuggestions(false);
+      };
+
+      const handleTickerChange = (e) => {
+        const val = e.target.value;
+        setForm(f => ({ ...f, ticker: val }));
+        searchStocks(val, 'ticker');
+      };
+
+      const handleCompanyChange = (e) => {
+        const val = e.target.value;
+        setForm(f => ({ ...f, companyName: val }));
+        searchStocks(val, 'company');
+      };
 
       const handleTickerBlur = async () => {
+        setTimeout(() => { if (activeField === 'ticker') setShowSuggestions(false); }, 200);
         if (form.ticker && !form.companyName) {
+          const match = SP500_DATA.find(([t]) => t.toLowerCase() === form.ticker.toLowerCase());
+          if (match) { setForm(f => ({ ...f, ticker: match[0], companyName: match[1] })); return; }
           setFetching(true);
           const name = await fetchCompanyName(form.ticker.toUpperCase());
           if (name) setForm(f => ({ ...f, companyName: name }));
           setFetching(false);
         }
+      };
+
+      const handleCompanyBlur = () => {
+        setTimeout(() => { if (activeField === 'company') setShowSuggestions(false); }, 200);
       };
 
       const handleSubmit = (e) => {
@@ -1040,18 +1080,37 @@
 
       const isValid = form.ticker && form.shares > 0 && form.purchasePrice > 0 && form.date;
 
+      const SuggestionDropdown = () => {
+        if (!showSuggestions || suggestions.length === 0) return null;
+        return (
+          <div ref={suggestionsRef} className="absolute z-50 left-0 right-0 mt-1 bg-rh-surface border border-rh-border rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+            {suggestions.map(([ticker, name]) => (
+              <button key={ticker} type="button" onMouseDown={() => selectStock(ticker, name)}
+                className="w-full px-3 py-2.5 text-left hover:bg-rh-card transition flex items-center gap-2 border-b border-rh-border/30 last:border-0">
+                <span className="text-sm">{getEmoji(ticker)}</span>
+                <span className="font-bold text-sm text-rh-green">{ticker}</span>
+                <span className="text-sm text-rh-muted truncate">{name}</span>
+              </button>
+            ))}
+          </div>
+        );
+      };
+
       return (
         <form onSubmit={handleSubmit} className="bg-rh-card border border-rh-border rounded-xl p-6 fade-in">
           <h3 className="font-bold mb-4">{lot ? '✏️ Edit Position' : '➕ Add Stock'}</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-            <div>
+            <div className="relative">
               <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Ticker *</label>
-              <input type="text" value={form.ticker} onChange={e => setForm({...form, ticker: e.target.value})} onBlur={handleTickerBlur}
-                placeholder="AAPL" className="w-full px-3 py-2.5 rounded-lg font-bold uppercase" maxLength={10} />
+              <input type="text" value={form.ticker} onChange={handleTickerChange} onBlur={handleTickerBlur} onFocus={() => searchStocks(form.ticker, 'ticker')}
+                placeholder="AAPL" className="w-full px-3 py-2.5 rounded-lg font-bold uppercase" maxLength={10} autoComplete="off" />
+              {activeField === 'ticker' && <SuggestionDropdown />}
             </div>
-            <div>
+            <div className="relative">
               <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Company {fetching && <span className="text-rh-green">(looking up...)</span>}</label>
-              <input type="text" value={form.companyName} onChange={e => setForm({...form, companyName: e.target.value})} placeholder="Auto-filled" className="w-full px-3 py-2.5 rounded-lg" />
+              <input type="text" value={form.companyName} onChange={handleCompanyChange} onBlur={handleCompanyBlur} onFocus={() => searchStocks(form.companyName, 'company')}
+                placeholder="Search company name..." className="w-full px-3 py-2.5 rounded-lg" autoComplete="off" />
+              {activeField === 'company' && <SuggestionDropdown />}
             </div>
             <div>
               <label className="block text-xs font-bold text-rh-dim mb-1 uppercase">Shares *</label>
